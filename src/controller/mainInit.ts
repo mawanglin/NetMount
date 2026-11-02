@@ -52,7 +52,7 @@ async function validateAndFixPaths(): Promise<void> {
   // 当 Windows 用户名变更时，挂载路径可能失效
   if (nmConfig.mount && nmConfig.mount.lists) {
     for (const mount of nmConfig.mount.lists) {
-      if (mount.mountPath && mount.mountPath.includes('/Users/') || mount.mountPath.includes('\\Users\\')) {
+      if (mount.mountPath && (mount.mountPath.includes('/Users/') || mount.mountPath.includes('\\Users\\'))) {
         // 检查挂载路径是否包含当前用户的 home 目录
         const normalizedHome = currentHome.replace(/\\/g, '/').toLowerCase()
         const normalizedMount = mount.mountPath.replace(/\\/g, '/').toLowerCase()

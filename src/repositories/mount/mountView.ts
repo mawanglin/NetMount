@@ -1,6 +1,8 @@
 import type { MountListItem } from '../../type/config'
 import type { MountList } from '../../type/rclone/rcloneInfo'
-import { normalizeMountPath } from './mountHelpers'
+import { isSameMountPath } from './mountHelpers'
+
+export { isSameMountPath, isFsUsedByOtherMount } from './mountHelpers'
 
 export interface MountRow {
   storageName: string
@@ -9,20 +11,6 @@ export interface MountRow {
   mounted: boolean
   /** NetMount 配置中是否存在（false 表示在 NetMount 之外挂载的） */
   hasConfig: boolean
-}
-
-/**
- * 比较两个挂载路径是否指向同一位置
- * 兼容 Windows 盘符 `X:` / `X:\` / `x:/` 与路径末尾斜杠的差异
- */
-export function isSameMountPath(a: string, b: string): boolean {
-  const key = (p: string) => {
-    let n = normalizeMountPath(p)
-    if (/^[A-Za-z]:\/?$/.test(n)) return n.slice(0, 2).toLowerCase()
-    if (/^[A-Za-z]:\//.test(n)) n = n[0]!.toLowerCase() + n.slice(1)
-    return n
-  }
-  return key(a) === key(b)
 }
 
 /**

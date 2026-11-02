@@ -6,6 +6,7 @@ import { rclone_api_post } from '../../utils/rclone/request'
 import { fs_exist_dir, fs_make_dir } from '../../utils'
 import { convertStoragePath } from '../../services/storage/StorageManager'
 import type { MountListItem } from '../../type/config'
+import type { MountList } from '../../type/rclone/rcloneInfo'
 
 const mountLogger = logger.withContext('MountRepository')
 
@@ -48,6 +49,27 @@ export function normalizeMountPath(path: string): string {
 }
 
 /**
+ * 比较两个挂载路径是否指向同一位置
+ * 兼容 Windows 盘符 `X:` / `X:\` / `x:/` 与路径末尾斜杠的差异
+ */
+export function isSameMountPath(a: string, b: string): boolean {
+  const key = (p: string) => {
+    let n = normalizeMountPath(p)
+    if (/^[A-Za-z]:\/?$/.test(n)) return n.slice(0, 2).toLowerCase()
+    if (/^[A-Za-z]:\//.test(n)) n = n[0]!.toLowerCase() + n.slice(1)
+    return n
+  }
+  return key(a) === key(b)
+}
+
+/**
+ * 除指定挂载点外，是否还有其他挂载点在使用同一个 fs
+ */
+export function isFsUsedByOtherMount(live: MountList[], fs: string, excludeMountPath: string): boolean {
+  return live.some(item => item.storageName === fs && !isSameMountPath(item.mountPath, excludeMountPath))
+}
+
+/**
  * 刷新挂载列表（从 rclone 获取）
  * 与 mountStore.refreshMounts 共用 reupMountService，避免两份实现不同步
  */
@@ -72,6 +94,16 @@ export function getMountConfig(mountPath: string): MountListItem | undefined {
 }
 
 /**
+ * 转换为传给 rclone 的挂载点格式
+ * Windows 下统一使用反斜杠，盘符补全为 X:\
+ */
+function toRcloneMountPoint(mountPath: string): string {
+  if (!rcloneInfo.version.os.toLowerCase().includes('windows')) return mountPath
+  const converted = mountPath.replace(/\//g, '\\')
+  return /^[A-Za-z]:$/.test(converted) ? converted + '\\' : converted
+}
+
+/**
  * 执行挂载操作
  */
 export async function performMount(mountInfo: MountListItem): Promise<void> {
@@ -93,16 +125,7 @@ export async function performMount(mountInfo: MountListItem): Promise<void> {
     }
   }
 
-  // Windows 盘符挂载路径处理：确保路径格式正确
-  let mountPath = mountInfo.mountPath
-  if (rcloneInfo.version.os.toLowerCase().includes('windows')) {
-    // 标准化路径分隔符
-    mountPath = mountPath.replace(/\//g, '\\')
-    // 对于盘符路径（如 X: 或 X:\），确保格式为 X:\
-    if (/^[A-Za-z]:$/.test(mountPath)) {
-      mountPath = mountPath + '\\'
-    }
-  }
+  const mountPath = toRcloneMountPoint(mountInfo.mountPath)
 
   try {
     await rclone_api_post('/mount/mount', {
@@ -221,47 +244,52 @@ export async function performMount(mountInfo: MountListItem): Promise<void> {
  * 用于刷新操作，强制 rclone 重新从远程读取目录列表
  */
 export async function forgetAllVfsCache(): Promise<void> {
-  const mounts = rcloneInfo.mountList
-  if (mounts.length === 0) return
+  // 先刷新，避免使用过期的挂载列表
+  await refreshMountList(true)
+  // 列表中的 storageName 已是 rclone 的 fs 字符串；同一 fs 多处挂载只需 forget 一次
+  const fsList = [...new Set(rcloneInfo.mountList.map(mount => mount.storageName))]
+  if (fsList.length === 0) return
 
-  const forgetPromises = mounts.map(async (mount) => {
-    try {
-      await rclone_api_post('/vfs/forget', {
-        fs: convertStoragePath(mount.storageName) || mount.storageName,
-      }, true)
-    } catch {
-      // 忽略 - 非关键操作
-    }
-  })
-
-  await Promise.all(forgetPromises)
-  mountLogger.debug('VFS cache forgotten for all mounts', { count: mounts.length })
+  await Promise.all(
+    fsList.map(async fs => {
+      try {
+        await rclone_api_post('/vfs/forget', { fs }, true)
+      } catch {
+        // 忽略 - 非关键操作
+      }
+    })
+  )
+  mountLogger.debug('VFS cache forgotten for all mounts', { count: fsList.length })
 }
 
 /**
  * 执行卸载操作
  * 卸载前先清理 VFS 缓存引用，卸载后清理残留临时文件
+ * 若同一存储（fs）还被其他挂载点使用，则跳过缓存清理，避免影响它们
  */
 export async function performUnmount(mountPath: string): Promise<void> {
-  // 查找对应的存储名称，用于 VFS 缓存清理
+  // 刷新挂载列表，既用于判断其他挂载点，也用于取得 rclone 记录的实际挂载点格式
+  await refreshMountList(true)
+
   const mountConfig = getMountConfig(mountPath)
-  
+  const fs = mountConfig ? convertStoragePath(mountConfig.storageName) || mountConfig.storageName : undefined
+  const liveMount = rcloneInfo.mountList.find(item => isSameMountPath(item.mountPath, mountPath))
+  const mountPoint = liveMount?.mountPath ?? toRcloneMountPoint(mountPath)
+
   // 卸载前通知 VFS 释放缓存引用
-  if (mountConfig) {
+  if (fs && !isFsUsedByOtherMount(rcloneInfo.mountList, fs, mountPath)) {
     try {
-      await rclone_api_post('/vfs/forget', {
-        fs: convertStoragePath(mountConfig.storageName) || mountConfig.storageName,
-      }, true)
+      await rclone_api_post('/vfs/forget', { fs }, true)
     } catch {
       // 忽略 - 非关键操作
     }
   }
-  
-  await rclone_api_post('/mount/unmount', { mountPoint: mountPath })
+
+  await rclone_api_post('/mount/unmount', { mountPoint })
   await refreshMountList()
-  
+
   // 卸载后清理该存储的残留临时文件
-  if (mountConfig) {
+  if (mountConfig && fs && !isFsUsedByOtherMount(rcloneInfo.mountList, fs, mountPath)) {
     try {
       const { cleanupVfsCacheOnUnmount } = await import('../../utils/tempCleanup')
       await cleanupVfsCacheOnUnmount(mountConfig.storageName)
