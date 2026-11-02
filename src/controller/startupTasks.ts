@@ -1,6 +1,7 @@
 import { reupStorage } from '../services/storage/StorageManager'
 import { addOpenlistInRclone } from '../utils/openlist/openlist'
 import { reupMount } from './storage/mount/mount'
+import { autoMountOnStartup } from './storage/mount/autoMount'
 import { checkNotice } from './update/notice'
 import { updateStorageInfoList } from './storage/allList'
 import { startTaskScheduler } from './task/task'
@@ -70,6 +71,10 @@ export async function runStartupTasksInBackground() {
   hooks.startup.storageSyncing = false
   hooks.startup.storageInitFailed = !refreshOk
   hooks.upStartup()
+
+  if (refreshOk) {
+    await runStep('auto mount', autoMountOnStartup)
+  }
 
   await runStep('start task scheduler', startTaskScheduler)
   await runStep('main startup hooks', main)

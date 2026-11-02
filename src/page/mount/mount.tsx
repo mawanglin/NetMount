@@ -15,14 +15,13 @@ import { logger } from '../../services'
 import {
   delMountStorage,
   getMountStorage,
-  isMounted,
   mountStorage,
   reupMount,
   unmountStorage,
 } from '../../controller/storage/mount/mount'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
-import { osInfo, roConfig } from '../../services/ConfigService'
+import { nmConfig, osInfo, roConfig } from '../../services/ConfigService'
 import { NoData_module } from '../other/noData'
 import {
   getWinFspInstallState,
@@ -33,6 +32,7 @@ import {
 } from '../../utils'
 import { IconEye, IconQuestionCircle } from '@arco-design/web-react/icon'
 import { exit } from '../../controller/main'
+import { buildMountRows } from '../../repositories/mount/mountView'
 const Row = Grid.Row
 const Col = Grid.Col
 
@@ -170,8 +170,8 @@ function Mount_page() {
           noDataElement={<NoData_module />}
           columns={columns}
           pagination={false}
-          data={mountList.map(item => {
-            const mounted = isMounted(item.mountPath)
+          data={buildMountRows(nmConfig.mount.lists, mountList).map(item => {
+            const { mounted } = item
             return {
               key: item.mountPath, // 添加唯一 key 避免 React 警告
               storageName: item.storageName,
