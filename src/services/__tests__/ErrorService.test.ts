@@ -2,7 +2,9 @@
  * ErrorService 测试
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll } from 'vitest'
+import i18n from 'i18next'
+import zhCn from '../../../src-tauri/locales/zh-cn.json'
 import {
   ErrorCategory,
   ErrorSeverity,
@@ -11,6 +13,16 @@ import {
 } from '../ErrorService'
 
 describe('ErrorService', () => {
+  beforeAll(async () => {
+    // 与应用一致的 i18n 配置，使用真实的中文语言包
+    await i18n.init({
+      lng: 'cn',
+      resources: { cn: { translation: zhCn } },
+      keySeparator: false,
+      interpolation: { escapeValue: false },
+    })
+  })
+
   beforeEach(() => {
     // 清除错误日志
     errorService.clearErrorLog()

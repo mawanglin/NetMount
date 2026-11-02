@@ -88,9 +88,10 @@ async function copyDir(
   }
 
   const srcFs = convertStoragePath(storageName, path, true)
-  const dstFs = convertStoragePath(destStoragename, destPath, true) + getFileName(path)
+  const dstBase = convertStoragePath(destStoragename, destPath, true)
+  const dstFs = dstBase + getFileName(path)
 
-  if (!srcFs || !dstFs) {
+  if (!srcFs || !dstBase) {
     throw new Error('Invalid source or destination path')
   }
 
@@ -137,10 +138,10 @@ async function moveDir(
   }
 
   const srcFs = convertStoragePath(storageName, path, true)
-  const dstFs =
-    convertStoragePath(destStoragename, destPath, true) + (newNmae ? newNmae : getFileName(path))
+  const dstBase = convertStoragePath(destStoragename, destPath, true)
+  const dstFs = dstBase + (newNmae ? newNmae : getFileName(path))
 
-  if (!srcFs || !dstFs) {
+  if (!srcFs || !dstBase) {
     throw new Error('Invalid source or destination path')
   }
 

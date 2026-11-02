@@ -22,8 +22,13 @@ vi.mock('../StorageManager', () => ({
 }))
 
 describe('TransferService', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
+    // vitest 配置了 mockReset，factory 中的默认实现会被清除，这里重新设置
+    const { convertStoragePath, formatPathRclone, getFileName } = await import('../StorageManager')
+    vi.mocked(convertStoragePath).mockImplementation((name, path) => (path ? `${name}:${path}` : `${name}:`))
+    vi.mocked(formatPathRclone).mockImplementation(path => path?.replace(/^\//, '') || '')
+    vi.mocked(getFileName).mockImplementation(path => path?.split('/').pop() || '')
   })
 
   describe('copyDir', () => {
@@ -109,7 +114,7 @@ describe('TransferService', () => {
       const { rclone_api_exec_async } = await import('../../../utils/rclone/request')
       vi.mocked(rclone_api_exec_async).mockResolvedValueOnce(false)
 
-      await expect(sync('src', '/folder1', 'dst', '/folder2', true)).rejects.toThrow('Bidirectional sync failed')
+      await expect(sync('src', '/folder1', 'dst', '/folder2', true)).rejects.toThrow('双向同步失败')
     })
   })
 })

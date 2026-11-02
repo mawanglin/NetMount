@@ -90,7 +90,7 @@ describe('File Utils - Path Functions', () => {
 
   describe('joinPath', () => {
     it('should join multiple path segments', () => {
-      expect(joinPath('folder', 'subfolder', 'file.txt')).toBe('/folder/subfolder/file.txt')
+      expect(joinPath('folder', 'subfolder', 'file.txt')).toBe('folder/subfolder/file.txt')
     })
 
     it('should handle paths with leading/trailing slashes', () => {

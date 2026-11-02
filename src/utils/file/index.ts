@@ -124,8 +124,9 @@ export function getParentPath(inputPath: string): string {
     return '/'
   }
   
-  // 重新组合路径
-  return '/' + parts.join('/')
+  // 重新组合路径，保持输入是否为绝对路径的形态
+  const isAbsolute = sanitized.startsWith('/')
+  return (isAbsolute ? '/' : '') + parts.join('/')
 }
 
 /**
@@ -183,7 +184,8 @@ export function getFileExtension(inputPath: string): string {
  * @returns 连接后的路径
  * 
  * @example
- * joinPath('folder', 'subfolder', 'file.txt') // '/folder/subfolder/file.txt'
+ * joinPath('folder', 'subfolder', 'file.txt') // 'folder/subfolder/file.txt'
+ * joinPath('/folder', 'subfolder') // '/folder/subfolder'
  * joinPath('/folder/', '/subfolder/') // '/folder/subfolder'
  */
 export function joinPath(...paths: string[]): string {
