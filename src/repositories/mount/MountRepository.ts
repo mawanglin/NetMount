@@ -87,8 +87,13 @@ export class MountRepository extends BaseRepository<MountEntity> {
     nmConfig.mount.lists.push(mountInfo)
     await saveNmConfig()
 
-    // 执行挂载
-    await performMount(mountInfo)
+    // 执行挂载；失败时回滚刚写入的配置，避免留下无法使用的残留配置
+    try {
+      await performMount(mountInfo)
+    } catch (error) {
+      await this.removeConfigEntry(mountInfo)
+      throw error
+    }
 
     const mount: MountEntity = {
       id: generateMountId(entity.storageName, entity.mountPath),
@@ -132,14 +137,24 @@ export class MountRepository extends BaseRepository<MountEntity> {
       parameters: newParameters,
       autoMount: entity.autoMount ?? oldConfig.autoMount,
     }
-    nmConfig.mount.lists[configIndex] = newConfig
-    await saveNmConfig()
 
-    // 如果关键路径变化，需要重新挂载
+    // 如果关键路径变化，需要重新挂载；成功后才写入配置，失败则保持旧配置并尽力恢复旧挂载
     if (newConfig.mountPath !== oldMount.mountPath || newConfig.storageName !== oldMount.storageName) {
       await performUnmount(oldMount.mountPath)
-      await performMount(newConfig)
+      try {
+        await performMount(newConfig)
+      } catch (error) {
+        try {
+          await performMount(oldConfig)
+        } catch (restoreError) {
+          mountLogger.error('Failed to restore previous mount after update failure', restoreError as Error)
+        }
+        throw error
+      }
     }
+
+    nmConfig.mount.lists[configIndex] = newConfig
+    await saveNmConfig()
 
     const newMount: MountEntity = {
       id: generateMountId(newConfig.storageName, newConfig.mountPath),
@@ -183,6 +198,18 @@ export class MountRepository extends BaseRepository<MountEntity> {
   // ==========================================
   // 业务方法
   // ==========================================
+
+  /**
+   * 从配置中移除指定条目（按引用匹配），用于创建失败时回滚
+   */
+  private async removeConfigEntry(entry: MountListItem): Promise<void> {
+    nmConfig.mount.lists = nmConfig.mount.lists.filter(item => item !== entry)
+    try {
+      await saveNmConfig()
+    } catch (error) {
+      mountLogger.error('Failed to roll back mount config', error as Error)
+    }
+  }
 
   /**
    * 刷新挂载列表（从 rclone 获取）

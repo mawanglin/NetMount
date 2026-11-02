@@ -579,7 +579,14 @@ export default function AddMount_page() {
                   originalMountPath
                 )
               } else {
-                await addMountStorage(storageName!, mountPathTemp, parameters, autoMount)
+                const added = await addMountStorage(storageName!, mountPathTemp, parameters, autoMount)
+                if (!added) {
+                  Notification.error({
+                    title: t('error'),
+                    content: t('mount_path_already_exists'),
+                  })
+                  return
+                }
               }
 
               if (isEditMode) {

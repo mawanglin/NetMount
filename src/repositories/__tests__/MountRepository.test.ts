@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { MountRepository } from '../mount/MountRepository'
 import type { MountListItem } from '../../type/config'
+import { generateMountId } from '../mount/mountHelpers'
 
 // Mock 依赖模块
 vi.mock('@tauri-apps/api/core', () => ({
@@ -61,14 +62,30 @@ vi.mock('../../type/rclone/api', () => ({
   isMountListResponse: vi.fn().mockReturnValue(true),
 }))
 
+// 全局配置会在每个用例前重置 mock 实现，这里恢复 factory 中声明的默认行为
+async function resetMockDefaults() {
+  const { saveNmConfig } = await import('../../services/ConfigService')
+  const { rclone_api_post } = await import('../../utils/rclone/request')
+  const { isMountListResponse } = await import('../../type/rclone/api')
+  const { fs_exist_dir, fs_make_dir } = await import('../../utils')
+  const { convertStoragePath } = await import('../../services/storage/StorageManager')
+  vi.mocked(saveNmConfig).mockResolvedValue(undefined)
+  vi.mocked(rclone_api_post).mockResolvedValue({ mountPoints: [] })
+  vi.mocked(isMountListResponse).mockReturnValue(true)
+  vi.mocked(fs_exist_dir).mockResolvedValue(true)
+  vi.mocked(fs_make_dir).mockResolvedValue(true)
+  vi.mocked(convertStoragePath).mockReturnValue('storage:')
+}
+
 describe('MountRepository', () => {
   let repository: MountRepository
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2024-01-01'))
     repository = new MountRepository()
     vi.clearAllMocks()
+    await resetMockDefaults()
   })
 
   afterEach(() => {
@@ -99,7 +116,7 @@ describe('MountRepository', () => {
 
   describe('mountStorage', () => {
     it('should mount storage successfully', async () => {
-      const { nmConfig, saveNmConfig } = await import('../../services/ConfigService')
+      const { nmConfig } = await import('../../services/ConfigService')
       const { rclone_api_post } = await import('../../utils/rclone/request')
       
       nmConfig.mount.lists = []
@@ -119,7 +136,10 @@ describe('MountRepository', () => {
 
       await repository.mountStorage(mountInfo)
 
-      expect(saveNmConfig).toHaveBeenCalled()
+      expect(rclone_api_post).toHaveBeenCalledWith(
+        '/mount/mount',
+        expect.objectContaining({ mountPoint: expect.stringContaining('test') })
+      )
     })
   })
 
@@ -236,6 +256,57 @@ describe('MountRepository', () => {
       const result = repository.getMountConfig('/mnt/nonexistent')
 
       expect(result).toBeUndefined()
+    })
+  })
+
+  describe('失败回滚', () => {
+    const params = { vfsOpt: {}, mountOpt: {} } as MountListItem['parameters']
+
+    it('create 挂载失败时回滚已写入的配置', async () => {
+      const { nmConfig, saveNmConfig } = await import('../../services/ConfigService')
+      const { rclone_api_post } = await import('../../utils/rclone/request')
+      nmConfig.mount.lists = []
+      vi.mocked(rclone_api_post).mockRejectedValueOnce(new Error('mount boom'))
+
+      await expect(
+        repository.create({ storageName: 's', mountPath: '/mnt/s', parameters: params })
+      ).rejects.toThrow('mount boom')
+
+      expect(nmConfig.mount.lists).toHaveLength(0)
+      expect(saveNmConfig).toHaveBeenCalledTimes(2)
+    })
+
+    it('update 新挂载失败时保持旧配置并恢复旧挂载', async () => {
+      const { nmConfig } = await import('../../services/ConfigService')
+      const { rclone_api_post } = await import('../../utils/rclone/request')
+      const oldConfig: MountListItem = {
+        storageName: 's',
+        mountPath: '/mnt/old',
+        parameters: params,
+        autoMount: false,
+      }
+      nmConfig.mount.lists = [oldConfig]
+
+      const calls: Array<[string, unknown]> = []
+      vi.mocked(rclone_api_post).mockImplementation(async (path: string, body?: unknown) => {
+        calls.push([path, body])
+        if (path === '/mount/listmounts') {
+          return { mountPoints: [{ fs: 's', mountPoint: '/mnt/old', mountedOn: '2024-01-01T00:00:00Z' }] }
+        }
+        if (path === '/mount/mount' && (body as { mountPoint: string }).mountPoint.includes('new')) {
+          throw new Error('new mount boom')
+        }
+        return undefined
+      })
+
+      const id = generateMountId('s', '/mnt/old')
+      await expect(repository.update(id, { mountPath: '/mnt/new' })).rejects.toThrow('new mount boom')
+
+      expect(nmConfig.mount.lists).toEqual([oldConfig])
+      const mountCalls = calls
+        .filter(([p]) => p === '/mount/mount')
+        .map(([, b]) => (b as { mountPoint: string }).mountPoint.replace(/\\/g, '/'))
+      expect(mountCalls).toEqual(['/mnt/new', '/mnt/old'])
     })
   })
 })
