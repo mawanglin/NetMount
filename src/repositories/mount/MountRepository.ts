@@ -42,15 +42,15 @@ export class MountRepository extends BaseRepository<MountEntity> {
   }
 
   async getById(id: string): Promise<MountEntity | null> {
-    const parsed = parseMountId(id)
-    if (parsed) {
-      const mounts = await this.getAll()
-      return mounts.find(m => 
-        m.storageName === parsed.storageName && m.mountPath === parsed.mountPath
-      ) || null
-    }
     const mounts = await this.getAll()
-    return mounts.find(m => m.id === id) || null
+    const exact = mounts.find(m => m.id === id)
+    if (exact) return exact
+
+    const parsed = parseMountId(id)
+    if (!parsed) return null
+    return mounts.find(m =>
+      m.storageName === parsed.storageName && m.mountPath === parsed.mountPath
+    ) || null
   }
 
   async create(entity: Partial<MountEntity>): Promise<MountEntity> {

@@ -1,14 +1,11 @@
 import { logger } from '../../services/LoggerService'
 import { nmConfig } from '../../services/ConfigService'
 import { rcloneInfo } from '../../services/rclone'
-import { useMountStore } from '../../stores/mountStore'
-import { hooks } from '../../services/hook'
+import { reupMountService } from '../../services/storage/MountService'
 import { rclone_api_post } from '../../utils/rclone/request'
 import { fs_exist_dir, fs_make_dir } from '../../utils'
 import { convertStoragePath } from '../../services/storage/StorageManager'
 import type { MountListItem } from '../../type/config'
-import type { MountList } from '../../type/rclone/rcloneInfo'
-import { isMountListResponse } from '../../type/rclone/api'
 
 const mountLogger = logger.withContext('MountRepository')
 
@@ -16,8 +13,10 @@ const mountLogger = logger.withContext('MountRepository')
  * 生成URL-safe的挂载点ID
  */
 export function generateMountId(storageName: string, mountPath: string): string {
-  const encodedName = encodeURIComponent(storageName)
-  const encodedPath = encodeURIComponent(mountPath)
+  // encodeURIComponent 不会编码 "_"，需手动编码，否则无法用首个 "_" 作为分隔符
+  const encode = (value: string) => encodeURIComponent(value).replace(/_/g, '%5F')
+  const encodedName = encode(storageName)
+  const encodedPath = encode(mountPath)
   return `${encodedName}_${encodedPath}`
 }
 
@@ -50,34 +49,10 @@ export function normalizeMountPath(path: string): string {
 
 /**
  * 刷新挂载列表（从 rclone 获取）
+ * 与 mountStore.refreshMounts 共用 reupMountService，避免两份实现不同步
  */
 export async function refreshMountList(noRefreshUI?: boolean): Promise<void> {
-  const response = await rclone_api_post('/mount/listmounts')
-  
-  if (!response || !isMountListResponse(response)) {
-    mountLogger.warn('Invalid mount list response format', { response })
-    rcloneInfo.mountList = []
-    useMountStore.getState().setMountList([])
-    !noRefreshUI && hooks.upMount()
-    return
-  }
-  
-  const mountPoints = response.mountPoints
-  rcloneInfo.mountList = []
-  const newMountList: MountList[] = []
-
-  mountPoints.forEach((item) => {
-    const mountItem: MountList = {
-      storageName: item.fs,
-      mountPath: item.mountPoint,
-      mountedTime: new Date(item.mountedOn),
-    }
-    rcloneInfo.mountList.push(mountItem)
-    newMountList.push(mountItem)
-  })
-  
-  useMountStore.getState().setMountList(newMountList)
-  !noRefreshUI && hooks.upMount()
+  await reupMountService(noRefreshUI)
 }
 
 /**
