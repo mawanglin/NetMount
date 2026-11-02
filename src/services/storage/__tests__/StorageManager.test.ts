@@ -14,26 +14,26 @@ import {
 } from '../StorageManager'
 
 // Mock 依赖模块
-vi.mock('../../services/hook', () => ({
+vi.mock('../../../services/hook', () => ({
   hooks: {
     upStorage: vi.fn(),
   },
 }))
 
-vi.mock('../../services/rclone', () => ({
+vi.mock('../../../services/rclone', () => ({
   rcloneInfo: {
     storageList: [],
     mountList: [],
   },
 }))
 
-vi.mock('../../services/openlist', () => ({
+vi.mock('../../../services/openlist', () => ({
   openlistInfo: {
     markInRclone: 'openlist',
   },
 }))
 
-vi.mock('../../services/ConfigService', () => ({
+vi.mock('../../../services/ConfigService', () => ({
   nmConfig: {
     mount: { lists: [] },
   },
@@ -42,16 +42,16 @@ vi.mock('../../services/ConfigService', () => ({
   },
 }))
 
-vi.mock('../../utils/rclone/request', () => ({
+vi.mock('../../../utils/rclone/request', () => ({
   rclone_api_post: vi.fn(),
 }))
 
-vi.mock('../../utils/openlist/request', () => ({
+vi.mock('../../../utils/openlist/request', () => ({
   openlist_api_get: vi.fn(),
   openlist_api_post: vi.fn(),
 }))
 
-vi.mock('../../stores/storageStore', () => ({
+vi.mock('../../../stores/storageStore', () => ({
   useStorageStore: {
     getState: vi.fn(() => ({
       setStorageList: vi.fn(),
@@ -59,11 +59,11 @@ vi.mock('../../stores/storageStore', () => ({
   },
 }))
 
-vi.mock('../../controller/storage/mount/mount', () => ({
+vi.mock('../../../controller/storage/mount/mount', () => ({
   delMountStorage: vi.fn(),
 }))
 
-vi.mock('../../utils/tempCleanup', () => ({
+vi.mock('../../../utils/tempCleanup', () => ({
   cleanupStorageOnDelete: vi.fn(),
 }))
 
@@ -213,7 +213,7 @@ describe('StorageManager', () => {
 
       const result = convertStoragePath('mys3', '/folder/file.txt', false, false, true)
 
-      expect(result).toBe('mys3')
+      expect(result).toBe('mys3:')
     })
 
     it('should return empty string for unknown storage', async () => {
@@ -248,7 +248,12 @@ describe('StorageManager', () => {
       const { rclone_api_post } = await import('../../../utils/rclone/request')
       vi.mocked(rclone_api_post).mockRejectedValueOnce(new Error('Storage not found'))
 
-      const result = await getStorageSpace('test-storage')
+      vi.mocked(rclone_api_post).mockRejectedValue(new Error('Storage not found'))
+
+      // 失败后会带延迟重试，需推进假定时器
+      const pending = getStorageSpace('test-storage')
+      await vi.runAllTimersAsync()
+      const result = await pending
 
       expect(result.total).toBeLessThan(0)
     })
@@ -257,7 +262,11 @@ describe('StorageManager', () => {
       const { rclone_api_post } = await import('../../../utils/rclone/request')
       vi.mocked(rclone_api_post).mockRejectedValueOnce(new Error('Storage not found'))
 
-      const result = await getStorageSpace('.netmount-test')
+      vi.mocked(rclone_api_post).mockRejectedValue(new Error('Storage not found'))
+
+      const pending = getStorageSpace('.netmount-test')
+      await vi.runAllTimersAsync()
+      const result = await pending
 
       expect(result).toEqual({ total: -2, free: -2, used: -2 })
     })

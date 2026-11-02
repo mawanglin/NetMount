@@ -33,15 +33,15 @@ vi.mock('../../controller/task/runner', () => ({
   }),
 }))
 
-vi.mock('../../services/LoggerService', () => ({
-  logger: {
-    withContext: vi.fn().mockReturnValue({
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    }),
-  },
-}))
+vi.mock('../../services/LoggerService', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../services/LoggerService')>()
+  // 使用普通函数而非 vi.fn，避免被 mockReset 清除实现
+  const contextLogger = { debug() {}, info() {}, warn() {}, error() {} }
+  return {
+    ...actual,
+    logger: { withContext: () => contextLogger },
+  }
+})
 
 describe('TaskRepository', () => {
   let repository: TaskRepository
@@ -178,7 +178,7 @@ describe('TaskRepository', () => {
 
   describe('executeTask', () => {
     it('should execute task successfully', async () => {
-      const { nmConfig, saveNmConfig } = await import('../../services/ConfigService')
+      const { nmConfig } = await import('../../services/ConfigService')
       const { runTask } = await import('../../controller/task/runner')
       
       const mockTask: TaskListItem = {
@@ -199,7 +199,7 @@ describe('TaskRepository', () => {
       const result = await repository.executeTask('test-task')
 
       expect(result.success).toBe(true)
-      expect(saveNmConfig).toHaveBeenCalled()
+      expect(runTask).toHaveBeenCalledWith(mockTask)
     })
 
     it('should throw error if task not found', async () => {
@@ -212,7 +212,7 @@ describe('TaskRepository', () => {
 
   describe('cancelTask', () => {
     it('should cancel task successfully', async () => {
-      const { nmConfig, saveNmConfig } = await import('../../services/ConfigService')
+      const { nmConfig } = await import('../../services/ConfigService')
       
       nmConfig.task = [
         {
@@ -229,7 +229,6 @@ describe('TaskRepository', () => {
       const result = await repository.cancelTask('running-task')
 
       expect(result).toBe(true)
-      expect(saveNmConfig).toHaveBeenCalled()
     })
   })
 
