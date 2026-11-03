@@ -9,6 +9,7 @@ import { Notification } from '@arco-design/web-react'
 import { t } from 'i18next'
 import { logger } from '../services/LoggerService'
 import { nmConfig } from '../services/ConfigService'
+import { recoverAfterComponentRestart } from './recovery'
 
 let componentWatchdogTimer: number | undefined
 let componentWatchdogStopping = false
@@ -48,8 +49,10 @@ export function startComponentWatchdog() {
             title: t('transmit'),
             content: t('rclone_restarting'),
           })
+          if (componentWatchdogStopping) return
           try {
             await restartRclone()
+            await recoverAfterComponentRestart()
             Notification.success({
               id: 'rclone_auto_recover_ok',
               title: t('success'),
@@ -74,8 +77,10 @@ export function startComponentWatchdog() {
             title: t('storage'),
             content: t('openlist_restarting'),
           })
+          if (componentWatchdogStopping) return
           try {
             await restartOpenlist()
+            await recoverAfterComponentRestart()
             Notification.success({
               id: 'openlist_auto_recover_ok',
               title: t('success'),

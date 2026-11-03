@@ -117,7 +117,15 @@ async function startRclone() {
 }
 
 async function stopRclone() {
-  await deleteStorage(openlistInfo.markInRclone)
+  // 清理 openlist 的 rclone 配置项；rclone 已无响应时不能因此卡住或中断停止流程
+  try {
+    await Promise.race([
+      deleteStorage(openlistInfo.markInRclone),
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ])
+  } catch (e) {
+    logger.warn('Skip removing openlist remote before stopping rclone', 'Rclone', { error: String(e) })
+  }
   await stopSidecarGracefully({
     binary: 'binaries/rclone',
     name: 'rclone',

@@ -17,6 +17,7 @@ mod diagnostics;
 mod fs;
 mod locale;
 mod pathsafe;
+mod redact;
 mod sidecar;
 mod tray;
 mod utils;
@@ -597,7 +598,7 @@ async fn spawn_sidecar(
             "\n=== spawn {} ===\npath: {}\nargs: {}\n",
             sidecar_name,
             sidecar_path.display(),
-            args.join(" ")
+            redact::redact_args(&args).join(" ")
         );
     }
     
@@ -846,7 +847,7 @@ async fn run_sidecar_once(
             "\n=== run once {} ===\npath: {}\nargs: {}\n",
             sidecar_name,
             sidecar_path.display(),
-            args.join(" ")
+            redact::redact_args(&args).join(" ")
         );
     }
 

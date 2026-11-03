@@ -6,25 +6,41 @@ import { exit as tauriExit } from '@tauri-apps/plugin-process'
 import { logger } from '../services/LoggerService'
 import { cleanupTempOnExit } from '../utils/tempCleanup'
 
-export async function exit(isRestartSelf: boolean = false) {
-  stopComponentWatchdog()
-  
+let exiting: Promise<void> | undefined
+
+/** 单个退出步骤：失败或超时只记录日志，不影响后续步骤 */
+async function runExitStep(label: string, step: () => Promise<unknown>, timeoutMs = 8000): Promise<void> {
   try {
-    await saveNmConfig()
-    await stopRclone()
-    await stopOpenlist()
-    await saveNmConfig()
-    
-    // 退出前清理临时文件（短超时，不阻塞退出）
-    await cleanupTempOnExit().catch(() => {
-      // 清理失败不阻止退出
-    })
-  } finally {
-    if (isRestartSelf) {
-      location.reload()
-    } else {
-      await tauriExit(0)
-    }
+    await Promise.race([
+      step(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs)),
+    ])
+  } catch (e) {
+    logger.error(`Exit step failed: ${label}`, e as Error, 'Lifecycle')
+  }
+}
+
+export function exit(isRestartSelf: boolean = false): Promise<void> {
+  // 托盘、窗口关闭等可能同时触发退出，只执行一次
+  exiting ??= doExit(isRestartSelf)
+  return exiting
+}
+
+async function doExit(isRestartSelf: boolean): Promise<void> {
+  stopComponentWatchdog()
+
+  await runExitStep('save config', saveNmConfig)
+  await runExitStep('stop rclone', stopRclone)
+  await runExitStep('stop openlist', stopOpenlist)
+  await runExitStep('save config (final)', saveNmConfig)
+  // 退出前清理临时文件（短超时，不阻塞退出）
+  await runExitStep('cleanup temp files', cleanupTempOnExit, 5000)
+
+  if (isRestartSelf) {
+    exiting = undefined
+    location.reload()
+  } else {
+    await tauriExit(0)
   }
 }
 

@@ -55,16 +55,22 @@ async function printError(error: Error | Response): Promise<void> {
 }
 
 async function rclone_api_noop(): Promise<boolean> {
+  // 必须带超时：rclone 假死时 fetch 会一直挂起，看门狗的检查就永远无法完成
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 3000)
   try {
     const url = buildApiUrl(rcloneInfo.endpoint.url, '/rc/noop')
     const res = await fetch(url, {
       method: 'POST',
       headers: { Authorization: getRcloneApiHeaders().Authorization },
+      signal: controller.signal,
     })
     return res.ok
   } catch (e) {
     logger.debug('Rclone ping failed', 'Rclone', { error: e })
     return false
+  } finally {
+    clearTimeout(timeoutId)
   }
 }
 
