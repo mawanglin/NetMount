@@ -127,23 +127,29 @@ fn app_data_dir(app: &tauri::AppHandle<Runtime>) -> anyhow::Result<PathBuf> {
     Ok(crate::resolve_data_dir())
 }
 
+/// 检查目录是否存在。
+/// 仅返回布尔值、不读取内容，因此不限制在数据目录内（挂载点通常在数据目录之外）；
+/// 路径不存在时返回 false 而不是报错。
 #[tauri::command]
 pub fn fs_exist_dir(app: tauri::AppHandle<Runtime>, path: &str) -> anyhow_tauri::TAResult<bool> {
-    let resolved_path = resolve_path(&app, path)?;
-    // 安全：验证路径在允许目录内
-    let validated_path = validate_path_in_allowed_dir(&app, &resolved_path)?;
-    let exists = std::fs::metadata(validated_path)
-        .map_err(anyhow::Error::from)?
-        .is_dir();
-    Ok(exists)
+    let resolved_path = crate::pathsafe::normalize_lexical(&resolve_path(&app, path)?);
+    match std::fs::metadata(resolved_path) {
+        Ok(meta) => Ok(meta.is_dir()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(anyhow::Error::from(e).into()),
+    }
 }
 
+/// 创建目录。
+/// 挂载点目录可能位于数据目录之外（如 /mnt、~/Mounts），因此不限制在数据目录内，
+/// 但要求是绝对路径，并经过词法规范化（消除 `..`），实际权限由操作系统控制。
 #[tauri::command]
 pub fn fs_make_dir(app: tauri::AppHandle<Runtime>, path: &str) -> anyhow_tauri::TAResult<()> {
-    let resolved_path = resolve_path(&app, path)?;
-    // 安全：验证路径在允许目录内
-    let validated_path = validate_path_in_allowed_dir(&app, &resolved_path)?;
-    std::fs::create_dir_all(validated_path).map_err(anyhow::Error::from)?;
+    let resolved_path = crate::pathsafe::normalize_lexical(&resolve_path(&app, path)?);
+    if !resolved_path.is_absolute() {
+        return Err(anyhow::anyhow!("Path must be absolute: {}", resolved_path.display()).into());
+    }
+    std::fs::create_dir_all(resolved_path).map_err(anyhow::Error::from)?;
     Ok(())
 }
 
@@ -155,21 +161,8 @@ pub fn read_text_file_tail(
 ) -> anyhow_tauri::TAResult<String> {
     let path = resolve_path(&app, path)?;
 
-    // 安全：仅允许读取 ~/.netmount 下的文件
-    let base = app_data_dir(&app)?;
-    let base = base
-        .canonicalize()
-        .unwrap_or(base);
-    let candidate = path
-        .canonicalize()
-        .unwrap_or(path.clone());
-    if !candidate.starts_with(&base) {
-        return Err(anyhow::anyhow!(
-            "Access denied: only files under {} are allowed",
-            base.display()
-        )
-        .into());
-    }
+    // 安全：仅允许读取数据目录下的文件
+    let candidate = validate_path_in_allowed_dir(&app, &path)?;
 
     let max_bytes = max_bytes.unwrap_or(256 * 1024).max(1024); // 默认 256KB，至少 1KB
 
@@ -188,19 +181,16 @@ pub fn read_text_file_tail(
 use serde_json::{to_string_pretty, Value};
 
 /// 验证路径是否在允许的目录内（防止路径遍历攻击）
+/// 对不存在的路径同样有效：先词法规范化 `..`，再解析已存在祖先的符号链接。
 fn validate_path_in_allowed_dir(app: &tauri::AppHandle<Runtime>, path: &Path) -> anyhow::Result<PathBuf> {
     let base = app_data_dir(app)?;
-    let base = base.canonicalize().unwrap_or(base);
-    let candidate = path.canonicalize().unwrap_or(path.to_path_buf());
-    
-    if !candidate.starts_with(&base) {
+    if !crate::pathsafe::is_under(&base, path) {
         return Err(anyhow::anyhow!(
             "Access denied: only files under {} are allowed",
-            base.display()
+            crate::pathsafe::resolve_lenient(&base).display()
         ));
     }
-    
-    Ok(candidate)
+    Ok(crate::pathsafe::resolve_lenient(path))
 }
 
 #[tauri::command]
@@ -347,10 +337,11 @@ pub fn export_config(
             return Err(anyhow::anyhow!("Output file must end with .zip"));
         }
 
-        let out = resolve_tilde(app, out_path)?;
-        
-        // 安全：验证输出路径在允许目录内
-        validate_path_in_allowed_dir(app, &out)?;
+        // 输出位置由用户通过保存对话框选择，可以在数据目录之外
+        let out = crate::pathsafe::normalize_lexical(&resolve_tilde(app, out_path)?);
+        if !out.is_absolute() {
+            return Err(anyhow::anyhow!("Output path must be absolute"));
+        }
         
         if let Some(parent) = out.parent() {
             if !parent.as_os_str().is_empty() {
@@ -371,6 +362,7 @@ pub fn export_config(
             options: &zip::write::FileOptions<'_, ()>,
             src_dir: &Path,
             base_dir: &Path,
+            skip: &Path,
         ) -> anyhow::Result<()> {
             for entry in fs::read_dir(src_dir)? {
                 let entry = entry?;
@@ -383,10 +375,15 @@ pub fn export_config(
                     continue;
                 }
                 
+                // 输出文件若位于数据目录内，不要把它自己打进压缩包
+                if crate::pathsafe::resolve_lenient(&path) == skip {
+                    continue;
+                }
+
                 let relative_path = path.strip_prefix(base_dir)?;
                 
                 if path.is_dir() {
-                    add_dir_to_zip(zip, options, &path, base_dir)?;
+                    add_dir_to_zip(zip, options, &path, base_dir, skip)?;
                 } else {
                     let entry_name = relative_path.to_string_lossy().replace('\\', "/");
                     zip.start_file(&entry_name, *options)?;
@@ -400,7 +397,8 @@ pub fn export_config(
         }
 
         if data_dir.exists() {
-            add_dir_to_zip(&mut zip, &options, &data_dir, &data_dir)?;
+            let skip = crate::pathsafe::resolve_lenient(&out);
+            add_dir_to_zip(&mut zip, &options, &data_dir, &data_dir, &skip)?;
         }
 
         zip.finish().map_err(anyhow::Error::from)?;
@@ -451,68 +449,56 @@ pub fn import_config(
         }
         fs::create_dir_all(&temp_dir)?;
         
-        // 解压所有文件到临时目录（带 Zip Slip 防护）
+        // 解压所有文件到临时目录（带 Zip Slip 与压缩炸弹防护）
+        const MAX_ENTRIES: usize = 100_000;
+        const MAX_TOTAL_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB
+        if zip.len() > MAX_ENTRIES {
+            return Err(anyhow::anyhow!("ZIP 文件条目过多（{}）", zip.len()));
+        }
+        let mut total_written: u64 = 0;
+
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i)?;
             let entry_name = entry.name().to_string();
-            
+
             // 跳过目录条目（zip 中目录条目通常以/结尾）
             if entry_name.ends_with('/') {
                 continue;
             }
-            
-            // 安全：防止 Zip Slip 攻击
-            // 检查 entry_name 不包含路径遍历字符
-            if entry_name.contains("..") || entry_name.contains('\\') {
-                return Err(anyhow::anyhow!(
-                    "安全警告：ZIP 文件包含可疑路径 '{}'",
-                    entry_name
-                ));
-            }
-            
-            let target_path = temp_dir.join(&entry_name);
-            
-            // 安全：验证目标路径在临时目录内（防止 Zip Slip）
-            // 首先检查路径字符串是否包含可疑字符
-            if entry_name.contains("..") || entry_name.contains('\\') || entry_name.starts_with('/') {
-                return Err(anyhow::anyhow!(
-                    "安全警告：ZIP 文件包含可疑路径 '{}'",
-                    entry_name
-                ));
-            }
-            
-            // 确保父目录存在
+
+            // 安全：仅接受由普通分量组成的相对路径，拒绝 `..`、绝对路径、盘符与反斜杠；
+            // 必须在创建任何目录之前完成校验
+            let target_path = crate::pathsafe::safe_join(&temp_dir, &entry_name)
+                .map_err(|e| anyhow::anyhow!("安全警告：ZIP 文件包含可疑路径：{}", e))?;
+
             if let Some(parent) = target_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            
-            // 验证目标路径在临时目录内
-            let temp_dir_canonical = temp_dir.canonicalize().unwrap_or_else(|_| temp_dir.clone());
-            let target_canonical = target_path.canonicalize().unwrap_or_else(|_| target_path.clone());
-            if !target_canonical.starts_with(&temp_dir_canonical) {
-                return Err(anyhow::anyhow!(
-                    "安全警告：ZIP 条目路径 '{}' 试图逃逸目标目录",
-                    entry_name
-                ));
-            }
-            
-            // 如果是目录，创建它
-            if entry.is_dir() {
-                fs::create_dir_all(&target_path)?;
-            } else {
-                // 如果是文件，解压它
-                let mut outfile = fs::File::create(&target_path)?;
-                std::io::copy(&mut entry, &mut outfile)?;
+
+            // 限制解压总量，防止声明大小与实际不符的压缩炸弹
+            let remaining = MAX_TOTAL_BYTES - total_written;
+            let mut outfile = fs::File::create(&target_path)?;
+            let written = std::io::copy(&mut (&mut entry).take(remaining + 1), &mut outfile)?;
+            total_written += written;
+            if total_written > MAX_TOTAL_BYTES {
+                return Err(anyhow::anyhow!("ZIP 解压后体积超过上限（4 GiB）"));
             }
         }
-        
+
+        // 先修复 openlist/config.json 中的绝对路径（在 temp_dir 中），再动现有数据
+        let temp_openlist_config_path = temp_dir.join("openlist/config.json");
+        if temp_openlist_config_path.exists() {
+            fix_openlist_config_paths(&temp_openlist_config_path)?;
+        }
+
         // 备份当前配置（以防万一）
         let backup_dir = data_dir.join(".backup_old");
         if data_dir.exists() {
             if backup_dir.exists() {
                 let _ = fs::remove_dir_all(&backup_dir);
             }
-            // 复制当前配置到备份目录（排除临时目录）
+            // 复制当前配置到备份目录（排除临时目录）；备份失败则中止，避免丢失现有配置
+            fs::create_dir_all(&backup_dir)?;
             for entry in fs::read_dir(&data_dir)? {
                 let entry = entry?;
                 let file_name = entry.file_name();
@@ -527,9 +513,11 @@ pub fn import_config(
                 let dst = backup_dir.join(&file_name);
                 
                 if src.is_dir() {
-                    let _ = copy_dir_all(&src, &dst);
+                    copy_dir_all(&src, &dst)
+                        .map_err(|e| anyhow::anyhow!("备份现有配置失败，已中止导入：{}", e))?;
                 } else {
-                    let _ = fs::copy(&src, &dst);
+                    fs::copy(&src, &dst)
+                        .map_err(|e| anyhow::anyhow!("备份现有配置失败，已中止导入：{}", e))?;
                 }
             }
         }
@@ -553,23 +541,29 @@ pub fn import_config(
             }
         }
         
-        // 先修复 openlist/config.json 中的绝对路径（在 temp_dir 中）
-        let temp_openlist_config_path = temp_dir.join("openlist/config.json");
-        if temp_openlist_config_path.exists() {
-            fix_openlist_config_paths(&temp_openlist_config_path)?;
-        }
+        // 复制新配置到数据目录；失败时用备份恢复，避免留下残缺的配置
+        let apply_result: anyhow::Result<()> = (|| {
+            for entry in fs::read_dir(&temp_dir)? {
+                let entry = entry?;
+                let src = entry.path();
+                let dst = data_dir.join(entry.file_name());
 
-        // 复制新配置到数据目录
-        for entry in fs::read_dir(&temp_dir)? {
-            let entry = entry?;
-            let src = entry.path();
-            let dst = data_dir.join(entry.file_name());
-
-            if src.is_dir() {
-                copy_dir_all(&src, &dst)?;
-            } else {
-                fs::copy(&src, &dst)?;
+                if src.is_dir() {
+                    copy_dir_all(&src, &dst)?;
+                } else {
+                    fs::copy(&src, &dst)?;
+                }
             }
+            Ok(())
+        })();
+        if let Err(e) = apply_result {
+            for entry in fs::read_dir(&backup_dir)? {
+                let entry = entry?;
+                let src = entry.path();
+                let dst = data_dir.join(entry.file_name());
+                let _ = if src.is_dir() { copy_dir_all(&src, &dst) } else { fs::copy(&src, &dst).map(|_| ()).map_err(Into::into) };
+            }
+            return Err(anyhow::anyhow!("写入新配置失败，已从备份恢复：{}", e));
         }
 
         // 清理临时目录

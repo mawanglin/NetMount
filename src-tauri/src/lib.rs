@@ -16,6 +16,7 @@ mod config;
 mod diagnostics;
 mod fs;
 mod locale;
+mod pathsafe;
 mod sidecar;
 mod tray;
 mod utils;
@@ -469,16 +470,30 @@ fn is_task_scheduler_available() -> bool {
 }
 
 #[tauri::command]
-fn download_file(url: String, out_path: String) -> Result<bool, usize> {
-    download_with_progress(&url, &out_path, |total_size, downloaded| {
+fn download_file(url: String, out_path: String) -> Result<bool, String> {
+    // 仅允许 http(s)
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return Err("Only http(s) URLs are allowed".to_string());
+    }
+
+    // 仅允许写入临时目录或数据目录，防止被用来覆盖任意文件
+    let out = pathsafe::normalize_lexical(Path::new(&out_path));
+    if !out.is_absolute()
+        || !(pathsafe::is_under(&env::temp_dir(), &out) || pathsafe::is_under(&resolve_data_dir(), &out))
+    {
+        return Err("Output path must be under the temp or data directory".to_string());
+    }
+
+    download_with_progress(&url, &out.to_string_lossy(), |total_size, downloaded| {
         println!(
             "下载进度: {}/{}  {}%",
             total_size,
             downloaded,
-            (100 * downloaded / total_size)
+            (100 * downloaded / total_size.max(1))
         );
     })
-    .expect("下载失败");
+    .map_err(|e| format!("下载失败: {}", e))?;
     Ok(true)
 }
 
@@ -509,7 +524,11 @@ fn get_temp_dir() -> Result<String, String> {
 
 #[tauri::command]
 fn register_sidecar_pid(name: String, pid: u32) -> Result<(), String> {
-    sidecar::register_sidecar_pid(&name, pid);
+    let name = sidecar::parse_sidecar_name(&name)?;
+    if !sidecar::is_valid_pid(pid) {
+        return Err(format!("Invalid PID: {}", pid));
+    }
+    sidecar::register_sidecar_pid(name, pid);
     Ok(())
 }
 
@@ -523,8 +542,8 @@ async fn spawn_sidecar(
     use std::process::Stdio;
     use std::io::Write as _;
     
-    // 从 "binaries/rclone" 提取 "rclone"
-    let sidecar_name = name.split('/').last().unwrap_or(&name);
+    // 从 "binaries/rclone" 提取 "rclone"，并限定为允许的 sidecar
+    let sidecar_name = sidecar::parse_sidecar_name(&name)?;
     
     // 构建 target triple（与 build.rs 保持一致）
     let target_triple = format!("{}-{}", 
@@ -601,7 +620,11 @@ async fn spawn_sidecar(
         .spawn()
         .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
     
-    let pid = child.id().unwrap_or(0);
+    // 进程已退出时 id() 为 None；不能用 0 代替，否则之后 kill(0) 会向整个进程组发信号
+    let pid = child
+        .id()
+        .filter(|p| sidecar::is_valid_pid(*p))
+        .ok_or_else(|| format!("Sidecar {} exited before it could be registered", sidecar_name))?;
     let name_clone = sidecar_name.to_string();
     
     // 注册到 Job Object（使用简短名称）
@@ -765,8 +788,8 @@ async fn run_sidecar_once(
     use std::io::Write as _;
     use std::process::Stdio;
 
-    // 从 "binaries/rclone" 提取 "rclone"
-    let sidecar_name = name.split('/').last().unwrap_or(&name);
+    // 从 "binaries/rclone" 提取 "rclone"，并限定为允许的 sidecar
+    let sidecar_name = sidecar::parse_sidecar_name(&name)?;
 
     // 构建 target triple（与 build.rs 保持一致）
     let target_triple = format!(
@@ -886,5 +909,6 @@ async fn run_sidecar_once(
 
 #[tauri::command]
 fn kill_sidecar(name: String) -> Result<bool, String> {
-    Ok(sidecar::kill_sidecar(&name))
+    let name = sidecar::parse_sidecar_name(&name)?;
+    Ok(sidecar::kill_sidecar(name))
 }

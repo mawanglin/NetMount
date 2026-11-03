@@ -2,7 +2,9 @@
   "identifier": "migrated",
   "description": "permissions that were migrated from v1",
   "local": true,
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:path:default",
     "core:event:default",
@@ -11,18 +13,15 @@
     "core:resources:default",
     "core:menu:default",
     "core:tray:default",
-    "fs:allow-read-file",
-    "fs:allow-write-file",
-    "fs:allow-read-dir",
-    "fs:allow-copy-file",
-    "fs:allow-mkdir",
-    "fs:allow-remove",
-    "fs:allow-remove",
-    "fs:allow-rename",
     "fs:allow-exists",
     {
       "identifier": "fs:scope",
-      "allow": ["$RESOURCE/**", "binaries/**", "$HOME/**", "$APPDATA/**", "$CONFIG/**", "$DATA/**", "$DOWNLOAD/**", "$DESKTOP/**", "$DOCUMENT/**", "$TEMP/**", "$TMP/**", "**"]
+      "allow": [
+        "$RESOURCE/**",
+        "$APPDATA/**",
+        "$TEMP/**",
+        "$TMP/**"
+      ]
     },
     "core:window:allow-create",
     "core:window:allow-center",
@@ -64,12 +63,6 @@
       "allow": [
         {
           "args": true,
-          "cmd": "aria2c",
-          "name": "aria2c",
-          "sidecar": false
-        },
-        {
-          "args": true,
           "name": "binaries/rclone",
           "sidecar": true
         },
@@ -77,12 +70,6 @@
           "args": true,
           "cmd": "msiexec",
           "name": "msiexec",
-          "sidecar": false
-        },
-        {
-          "args": true,
-          "cmd": "curl",
-          "name": "curl",
           "sidecar": false
         },
         {
@@ -103,12 +90,6 @@
       "allow": [
         {
           "args": true,
-          "cmd": "aria2c",
-          "name": "aria2c",
-          "sidecar": false
-        },
-        {
-          "args": true,
           "name": "binaries/rclone",
           "sidecar": true
         },
@@ -116,12 +97,6 @@
           "args": true,
           "cmd": "msiexec",
           "name": "msiexec",
-          "sidecar": false
-        },
-        {
-          "args": true,
-          "cmd": "curl",
-          "name": "curl",
           "sidecar": false
         },
         {
@@ -142,12 +117,6 @@
       "allow": [
         {
           "args": true,
-          "cmd": "aria2c",
-          "name": "aria2c",
-          "sidecar": false
-        },
-        {
-          "args": true,
           "name": "binaries/rclone",
           "sidecar": true
         },
@@ -155,12 +124,6 @@
           "args": true,
           "cmd": "msiexec",
           "name": "msiexec",
-          "sidecar": false
-        },
-        {
-          "args": true,
-          "cmd": "curl",
-          "name": "curl",
           "sidecar": false
         },
         {

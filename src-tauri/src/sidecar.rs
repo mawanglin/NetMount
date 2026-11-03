@@ -117,8 +117,32 @@ pub fn init_job_object() -> Result<(), String> {
     Ok(())
 }
 
+/// PID 是否可安全用于发送信号。
+/// 0 在 Unix 上表示"当前进程组"，超出 i32 范围的值转换后会变成负数（进程组），均不可接受。
+pub fn is_valid_pid(pid: u32) -> bool {
+    pid > 0 && pid <= i32::MAX as u32
+}
+
+/// 允许管理的 sidecar 名称（不接受任意名称，避免执行或终止非预期的程序）
+pub const ALLOWED_SIDECARS: [&str; 2] = ["rclone", "openlist"];
+
+/// 从 "binaries/rclone" 之类的名称中提取并校验 sidecar 名称
+pub fn parse_sidecar_name(name: &str) -> Result<&str, String> {
+    let short = name.rsplit('/').next().unwrap_or(name);
+    if ALLOWED_SIDECARS.contains(&short) {
+        Ok(short)
+    } else {
+        Err(format!("Unsupported sidecar: {}", name))
+    }
+}
+
 /// 注册 sidecar 进程 PID
 pub fn register_sidecar_pid(name: &str, pid: u32) {
+    if !is_valid_pid(pid) {
+        eprintln!("Ignoring invalid PID {} for sidecar {}", pid, name);
+        return;
+    }
+
     // 保存 PID
     let mut children = SIDECAR_CHILDREN.lock().unwrap();
     children.insert(name.to_string(), pid);
@@ -141,12 +165,13 @@ pub fn get_sidecar_pid(name: &str) -> Option<u32> {
 
 /// 终止指定 sidecar 进程
 pub fn kill_sidecar(name: &str) -> bool {
+    // 取出并移除记录，避免进程退出后 PID 被复用时被误杀
     let pid = {
-        let children = SIDECAR_CHILDREN.lock().unwrap();
-        children.get(name).copied()
+        let mut children = SIDECAR_CHILDREN.lock().unwrap();
+        children.remove(name)
     };
     
-    if let Some(pid) = pid {
+    if let Some(pid) = pid.filter(|p| is_valid_pid(*p)) {
         #[cfg(target_os = "windows")]
         unsafe {
             use winapi::um::processthreadsapi::TerminateProcess;
@@ -178,6 +203,10 @@ pub fn kill_all_sidecars() {
     };
 
     for (name, pid) in entries.iter() {
+        if !is_valid_pid(*pid) {
+            continue;
+        }
+
         #[cfg(target_os = "windows")]
         unsafe {
             use winapi::um::processthreadsapi::TerminateProcess;

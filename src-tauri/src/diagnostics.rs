@@ -33,14 +33,10 @@ fn app_data_dir(app: &tauri::AppHandle<Runtime>) -> anyhow::Result<PathBuf> {
 
 fn ensure_under_app_data_dir(app: &tauri::AppHandle<Runtime>, candidate: &Path) -> anyhow::Result<()> {
     let base = app_data_dir(app)?;
-    let base = base.canonicalize().unwrap_or(base);
-    let candidate = candidate
-        .canonicalize()
-        .unwrap_or_else(|_| candidate.to_owned());
-    if !candidate.starts_with(&base) {
+    if !crate::pathsafe::is_under(&base, candidate) {
         return Err(anyhow::anyhow!(
             "Access denied: only files under {} are allowed",
-            base.display()
+            crate::pathsafe::resolve_lenient(&base).display()
         ));
     }
     Ok(())
