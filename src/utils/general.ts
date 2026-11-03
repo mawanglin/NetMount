@@ -47,6 +47,9 @@ export function getProperties<T extends Record<string, unknown>>(
  */
 export function mergeObjects<T>(target: T, source: Partial<T>): T {
   for (const key in source) {
+    // 配置来自磁盘/导入文件，JSON 里的 "__proto__" 会成为自有属性；
+    // 若不跳过，target["__proto__"] 取到的是 Object.prototype，会被递归写入，造成原型污染
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
     if (Object.prototype.hasOwnProperty.call(source, key)) {
       const sourceValue = source[key]
       const targetValue = target[key]
