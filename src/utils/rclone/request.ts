@@ -186,6 +186,10 @@ async function rclone_api_wait_for_job(
   signal?: AbortSignal
 ): Promise<boolean> {
   const startTime = Date.now()
+  // 状态查询偶发失败（网络抖动、rclone 重启中）不应直接判定任务失败，
+  // 否则任务仍在 rclone 中运行，用户却被告知失败并可能重复发起
+  const MAX_CONSECUTIVE_STATUS_FAILURES = 5
+  let statusFailures = 0
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -198,9 +202,15 @@ async function rclone_api_wait_for_job(
     const status = await rclone_api_job_status(jobid, true)
 
     if (!status) {
-      logger.error(`Failed to get job status for jobid: ${jobid}`)
-      return false
+      statusFailures++
+      if (statusFailures >= MAX_CONSECUTIVE_STATUS_FAILURES) {
+        logger.error(`Failed to get job status for jobid: ${jobid}`)
+        return false
+      }
+      await new Promise(resolve => setTimeout(resolve, pollInterval))
+      continue
     }
+    statusFailures = 0
 
     if (status.finished) {
       if (status.success) {
@@ -221,14 +231,21 @@ async function rclone_api_wait_for_job(
       return false
     }
 
+    // 每轮轮询都会注册 abort 监听，轮询结束后必须移除，否则长任务会累积监听器
+    let onAbort: (() => void) | undefined
     await Promise.race([
       new Promise(resolve => setTimeout(resolve, pollInterval)),
       new Promise((_, reject) => {
         if (signal) {
-          signal.addEventListener('abort', () => reject(new Error('Cancelled')), { once: true })
+          onAbort = () => reject(new Error('Cancelled'))
+          signal.addEventListener('abort', onAbort, { once: true })
         }
       }),
-    ]).catch(() => {})
+    ])
+      .catch(() => {})
+      .finally(() => {
+        if (signal && onAbort) signal.removeEventListener('abort', onAbort)
+      })
   }
 }
 
