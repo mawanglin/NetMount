@@ -175,12 +175,21 @@ async function addOpenlistInRclone() {
 
   // 可选：探测 WebDAV 端点以提供诊断信息
   try {
-    const probeRes = await fetch(webdavUrl, {
-      method: 'OPTIONS',
-      headers: {
-        Authorization: 'Basic ' + btoa(username + ':' + password),
-      },
-    })
+    // 带超时：OpenList 未就绪时 fetch 可能一直挂起，会卡住启动与恢复流程
+    const probeController = new AbortController()
+    const probeTimer = setTimeout(() => probeController.abort(), 3000)
+    let probeRes: Response
+    try {
+      probeRes = await fetch(webdavUrl, {
+        method: 'OPTIONS',
+        headers: {
+          Authorization: 'Basic ' + btoa(username + ':' + password),
+        },
+        signal: probeController.signal,
+      })
+    } finally {
+      clearTimeout(probeTimer)
+    }
     logger.info('WebDAV probe HTTP status', 'OpenlistUtils', { status: probeRes.status })
     if (probeRes.status === 401) {
       logger.warn('WebDAV returned 401 - Please check if user has WebDAV Read/Management permissions enabled', 'OpenlistUtils')

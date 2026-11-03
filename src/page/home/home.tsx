@@ -24,6 +24,7 @@ import { IconCloud, IconList, IconStorage, IconSwap } from '@arco-design/web-rea
 import { filterHideStorage } from '../../services/storage/StorageManager'
 import { useStatsStore } from '../../stores/useStatsStore'
 import { useStorageList, useMountList } from '../../stores'
+import { isHttpUrl } from '../../utils/fetchWithTimeout'
 const Row = Grid.Row
 const Col = Grid.Col
 
@@ -68,7 +69,10 @@ function Home_page() {
             </>
           ),
           onOk: () => {
-            shell.open(info.website!)
+            // 链接来自远程服务器，仅打开 http(s) 链接
+            if (isHttpUrl(info.website)) {
+              shell.open(info.website)
+            }
           },
         })
       })

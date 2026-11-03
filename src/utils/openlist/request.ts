@@ -1,6 +1,43 @@
 import { openlistInfo } from '../../services/openlist'
 import { logger } from '../../services/LoggerService'
 import { HTTP_HEADERS } from '../../constants'
+import { getOpenlistToken } from './openlistAuth'
+
+/** 单次请求超时。OpenList 创建存储等操作可能较慢，故取较宽松的值 */
+const API_TIMEOUT_MS = 60_000
+
+/**
+ * 带超时的 fetch：服务假死时不会无限挂起（否则启动、恢复流程会被卡住）
+ */
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+/**
+ * OpenList 的令牌会过期（默认 48 小时），过期后接口以 HTTP 200 + code 401 响应。
+ * 长时间运行的应用需要自动重新登录并重试一次，否则 OpenList 相关功能会永久失效。
+ */
+async function withReauth(request: () => Promise<ApiResponse>): Promise<ApiResponse> {
+  const first = await request()
+  if (first.code !== 401 || !openlistInfo.endpoint.auth.token) {
+    return first
+  }
+  logger.info('OpenList token expired, re-login and retry', 'OpenListAPI')
+  openlistInfo.endpoint.auth.token = ''
+  try {
+    await getOpenlistToken()
+  } catch (e) {
+    logger.warn('OpenList re-login failed', 'OpenListAPI', { error: String(e) })
+    return first
+  }
+  return request()
+}
 
 // API 响应接口
 interface ApiResponse {
@@ -119,18 +156,19 @@ async function openlist_api_get(path: string, queryData?: object): Promise<ApiRe
   const fullPath = buildFullPath(path, queryData)
 
   return wrapApiCall(
-    async () => {
-      const headers: Record<string, string> = {}
-      if (openlistInfo.endpoint.auth.token) {
-        headers['Authorization'] = openlistInfo.endpoint.auth.token
-      }
-      const res = await fetch(fullPath, {
-        method: 'GET',
-        redirect: 'follow',
-        headers,
-      })
-      return handleApiResponse(res, fullPath, 'GET')
-    },
+    () =>
+      withReauth(async () => {
+        const headers: Record<string, string> = {}
+        if (openlistInfo.endpoint.auth.token) {
+          headers['Authorization'] = openlistInfo.endpoint.auth.token
+        }
+        const res = await fetchWithTimeout(fullPath, {
+          method: 'GET',
+          redirect: 'follow',
+          headers,
+        })
+        return handleApiResponse(res, fullPath, 'GET')
+      }),
     fullPath,
     'GET'
   )
@@ -147,21 +185,22 @@ async function openlist_api_post(
   const fullPath = buildFullPath(path, queryData)
 
   return wrapApiCall(
-    async () => {
-      const headers: Record<string, string> = {
-        'Content-Type': HTTP_HEADERS.CONTENT_TYPE_JSON,
-      }
-      if (openlistInfo.endpoint.auth.token) {
-        headers['Authorization'] = openlistInfo.endpoint.auth.token
-      }
-      const res = await fetch(fullPath, {
-        method: 'POST',
-        redirect: 'follow',
-        headers,
-        body: bodyData ? JSON.stringify(bodyData) : null,
-      })
-      return handleApiResponse(res, fullPath, 'POST')
-    },
+    () =>
+      withReauth(async () => {
+        const headers: Record<string, string> = {
+          'Content-Type': HTTP_HEADERS.CONTENT_TYPE_JSON,
+        }
+        if (openlistInfo.endpoint.auth.token) {
+          headers['Authorization'] = openlistInfo.endpoint.auth.token
+        }
+        const res = await fetchWithTimeout(fullPath, {
+          method: 'POST',
+          redirect: 'follow',
+          headers,
+          body: bodyData ? JSON.stringify(bodyData) : null,
+        })
+        return handleApiResponse(res, fullPath, 'POST')
+      }),
     fullPath,
     'POST'
   )

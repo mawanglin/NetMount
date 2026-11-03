@@ -29,10 +29,17 @@ pub fn redact_args(args: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     let mut redact_next = false;
 
-    for arg in args {
+    for (i, arg) in args.iter().enumerate() {
         if redact_next {
             out.push(MASK.to_string());
             redact_next = false;
+            continue;
+        }
+
+        // `openlist admin set <密码>`：子命令的位置参数就是密码
+        if i >= 1 && arg == "set" && args[i - 1] == "admin" {
+            redact_next = true;
+            out.push(arg.clone());
             continue;
         }
 
@@ -119,6 +126,15 @@ mod tests {
         assert!(!out.contains("hunter2") && !out.contains("topsecret"));
         assert!(out.contains("--rc-user=admin"));
         assert_eq!(out.lines().count(), 2);
+    }
+
+    #[test]
+    fn masks_openlist_admin_set_password() {
+        let out = redact_args(&v(&["--data", "/d", "admin", "set", "hunter2"]));
+        assert_eq!(out, v(&["--data", "/d", "admin", "set", "***"]));
+        // 其他场景下的 "set" 不受影响
+        let other = redact_args(&v(&["config", "set", "x"]));
+        assert_eq!(other, v(&["config", "set", "x"]));
     }
 
     #[test]

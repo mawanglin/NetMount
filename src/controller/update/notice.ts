@@ -1,11 +1,14 @@
 import { nmConfig } from '../../services/ConfigService'
 import { Notice } from '../../type/controller/update'
 import { logger } from '../../services/LoggerService'
+import { fetchWithTimeout } from '../../utils/fetchWithTimeout'
 
 async function checkNotice() {
   try {
     const notice: Notice = await (
-      await fetch(nmConfig.api.url + '/GetNotice/?lang=' + nmConfig.settings.language)
+      await fetchWithTimeout(
+        nmConfig.api.url + '/GetNotice/?lang=' + encodeURIComponent(nmConfig.settings.language ?? '')
+      )
     ).json()
     if (notice.state === 'success') {
       if (
