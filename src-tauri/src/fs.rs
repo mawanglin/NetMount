@@ -226,7 +226,8 @@ pub async fn write_json_file(app: tauri::AppHandle<Runtime>, config_data: Value,
     let pretty_config = to_string_pretty(&config_data)
         .map_err(|json_error| format!("Failed to serialize JSON: {}", json_error))?;
 
-    fs::write(validated_path, pretty_config)
+    // 原子写入，避免中途失败留下被截断的配置文件
+    crate::atomicfile::write_atomic(&validated_path, pretty_config.as_bytes())
         .map_err(|io_error| format!("Failed to write file: {}", io_error))?;
 
     Ok(())

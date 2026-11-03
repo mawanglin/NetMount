@@ -11,6 +11,7 @@ use fs::{fs_exist_dir, fs_make_dir, read_json_file, write_json_file, copy_file, 
 use locale::Locale;
 use tray::Tray;
 
+mod atomicfile;
 mod autostart;
 mod config;
 mod diagnostics;
@@ -105,11 +106,12 @@ impl<M: tauri::Manager<Runtime>> AppExt for M {
     fn update_app_config(&self) -> anyhow::Result<()> {
         self.with_app_state::<Config, _>(|config| {
             let current_locale = tauri_plugin_os::locale().unwrap_or_else(|| "C".into());
+            // language 不是字符串（如导入的配置里为 null）时回退到系统语言，不能 panic
             self.set_app_state(Locale::new(
                 config.0["settings"]
                     .get("language")
-                    .map(|item| item.as_str().unwrap())
-                    .unwrap_or_else(|| &current_locale),
+                    .and_then(|item| item.as_str())
+                    .unwrap_or(&current_locale),
             ));
             self.set_app_state(Tray::new(self.app_handle())?);
             Ok(())
@@ -118,11 +120,10 @@ impl<M: tauri::Manager<Runtime>> AppExt for M {
 
     fn write_app_config(&self, config: Config) -> anyhow::Result<()> {
         self.set_app_state(config);
-        let file = File::create(self.app_config_file())?;
-        serde_json::to_writer_pretty(
-            file,
-            &self.with_app_state::<Config, _>(|config| config.0.clone()),
-        )?;
+        let value = self.with_app_state::<Config, _>(|config| config.0.clone());
+        let bytes = serde_json::to_vec_pretty(&value)?;
+        // 原子写入：中途崩溃/断电不会留下被截断的 config.json（否则下次启动会失败）
+        atomicfile::write_atomic(&self.app_config_file(), &bytes)?;
         Ok(())
     }
 
@@ -303,10 +304,25 @@ pub fn init() -> anyhow::Result<()> {
             }
 
             //配置文件
-            if let Some(file) = File::open(app.app_config_file()).ok() {
-                app.set_app_state(Config(serde_json::from_reader(file)?))
-            } else {
-                app.write_app_config(Config::default())?
+            let config_file = app.app_config_file();
+            let loaded = match File::open(&config_file) {
+                Ok(file) => match serde_json::from_reader::<_, serde_json::Value>(file) {
+                    Ok(value) if value.is_object() => Some(value),
+                    // 内容损坏或不是对象：不能让应用因此无法启动。
+                    // 把坏文件改名保留，再用默认配置继续，用户仍可手动找回
+                    _ => {
+                        match atomicfile::quarantine_corrupt(&config_file) {
+                            Ok(moved) => eprintln!("配置文件已损坏，已移动到 {}", moved.display()),
+                            Err(e) => eprintln!("配置文件已损坏，且无法移动: {}", e),
+                        }
+                        None
+                    }
+                },
+                Err(_) => None,
+            };
+            match loaded {
+                Some(value) => app.set_app_state(Config(value)),
+                None => app.write_app_config(Config::default())?,
             };
             app.update_app_config()?;
 
@@ -353,6 +369,10 @@ fn update_config(
     app: tauri::AppHandle<Runtime>,
     data: serde_json::Value,
 ) -> anyhow_tauri::TAResult<()> {
+    // 配置必须是 JSON 对象；null、数组等会让后续按字段读取的逻辑全部失效
+    if !data.is_object() {
+        return Err(anyhow::anyhow!("config must be a JSON object").into());
+    }
     app.write_app_config(Config(data))?;
     app.update_app_config()?;
     Ok(())
