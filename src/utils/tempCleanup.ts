@@ -33,6 +33,18 @@ function getRcloneTempDir(): string | undefined {
 }
 
 /**
+ * 存储名是否可安全用于拼接缓存路径或作为 rclone 命令行参数。
+ * OpenList 存储名来自挂载路径（可能来自导入的外部配置），不能含路径分隔符、`..`，
+ * 也不能以 `-` 开头（会被当成命令行选项）。
+ */
+export function isSafeStorageNameForPath(name: string): boolean {
+  if (!name || name.trim() === '' || name.startsWith('-')) return false
+  if (/[\\/\0]/.test(name)) return false
+  if (name === '.' || name === '..') return false
+  return true
+}
+
+/**
  * 清理过期的临时文件
  * - 清理超过1小时的rclone缓存文件
  * - 清理超过1小时的rclone临时文件
@@ -100,7 +112,7 @@ async function cleanupDirectory(dirPath: string, minAge: string): Promise<void> 
     await invoke('run_sidecar_once', {
       name: 'binaries/rclone',
       args: ['delete', dirPath, '--min-age', minAge],
-      timeout_ms: 30000,
+      timeoutMs: 30000,
     }).catch(() => {
       // 忽略错误，清理失败不影响主流程
     })
@@ -123,7 +135,7 @@ async function purgeDirectory(dirPath: string, timeoutMs: number = 30000): Promi
     await invoke('run_sidecar_once', {
       name: 'binaries/rclone',
       args: ['purge', dirPath],
-      timeout_ms: timeoutMs,
+      timeoutMs: timeoutMs,
     }).catch(() => {
       // 忽略错误
     })
@@ -146,7 +158,7 @@ async function cleanupOldLogs(logDir: string, minAge: string): Promise<void> {
     await invoke('run_sidecar_once', {
       name: 'binaries/rclone',
       args: ['delete', logDir, '--include', '*.log.*', '--min-age', minAge],
-      timeout_ms: 30000,
+      timeoutMs: 30000,
     }).catch(() => {
       // 忽略错误
     })
@@ -160,6 +172,10 @@ async function cleanupOldLogs(logDir: string, minAge: string): Promise<void> {
  * 在卸载挂载点后调用，清除该存储的残留缓存文件
  */
 export async function cleanupVfsCacheOnUnmount(storageName: string): Promise<void> {
+  if (!isSafeStorageNameForPath(storageName)) {
+    logger.warn('Skip VFS cache cleanup: unsafe storage name', 'TempCleanup', { storageName })
+    return
+  }
   try {
     const rcloneCacheDir = getRcloneCacheDir()
     if (!rcloneCacheDir) return
@@ -176,7 +192,7 @@ export async function cleanupVfsCacheOnUnmount(storageName: string): Promise<voi
     await invoke('run_sidecar_once', {
       name: 'binaries/rclone',
       args: ['cleanup', storageName + ':'],
-      timeout_ms: 15000,
+      timeoutMs: 15000,
     }).catch(() => {
       // cleanup 可能因远程不可用而失败，忽略
     })
@@ -220,6 +236,10 @@ export async function cleanupTempOnExit(): Promise<void> {
  * 确保删除存储策略后磁盘空间被正确释放
  */
 export async function cleanupStorageOnDelete(storageName: string): Promise<void> {
+  if (!isSafeStorageNameForPath(storageName)) {
+    logger.warn('Skip storage cache cleanup: unsafe storage name', 'TempCleanup', { storageName })
+    return
+  }
   try {
     // 1. 清理 rclone VFS 缓存（需要远程还存在）
     await cleanupVfsCacheOnUnmount(storageName)

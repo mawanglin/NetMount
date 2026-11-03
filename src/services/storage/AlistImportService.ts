@@ -50,6 +50,13 @@ interface ImportResult {
  * @param input - JSON 字符串或已解析的对象
  */
 function parseAlistConfig(input: string | unknown): AlistStorageItem[] {
+  return parseAlistConfigWithStats(input).items
+}
+
+/**
+ * 与 parseAlistConfig 相同，但同时返回被丢弃（格式不合法）的条目数
+ */
+function parseAlistConfigWithStats(input: string | unknown): { items: AlistStorageItem[]; skipped: number } {
   let data: unknown
 
   if (typeof input === 'string') {
@@ -91,23 +98,33 @@ function parseAlistConfig(input: string | unknown): AlistStorageItem[] {
 /**
  * 验证存储项数组
  */
-function validateStorageItems(items: unknown[]): AlistStorageItem[] {
+function validateStorageItems(items: unknown[]): { items: AlistStorageItem[]; skipped: number } {
   const validItems: AlistStorageItem[] = []
+  let skipped = 0
 
   for (const item of items) {
     if (!item || typeof item !== 'object') {
+      skipped++
       continue
     }
 
     const obj = item as Record<string, unknown>
 
     // 必须有 mount_path 和 driver
+    // 日志中只记录定位所需的字段：条目的 addition 内含令牌、密码等凭据，不能写入日志
     if (!obj.mount_path || typeof obj.mount_path !== 'string') {
-      logger.warn('Skipping alist storage item: missing mount_path', 'AlistImport', { item })
+      logger.warn('Skipping alist storage item: missing mount_path', 'AlistImport', { driver: obj.driver })
+      skipped++
       continue
     }
     if (!obj.driver || typeof obj.driver !== 'string') {
-      logger.warn('Skipping alist storage item: missing driver', 'AlistImport', { item })
+      logger.warn('Skipping alist storage item: missing driver', 'AlistImport', { mount_path: obj.mount_path })
+      skipped++
+      continue
+    }
+    if (!isSafeMountPath(obj.mount_path)) {
+      logger.warn('Skipping alist storage item: unsafe mount_path', 'AlistImport', { mount_path: obj.mount_path })
+      skipped++
       continue
     }
 
@@ -137,7 +154,20 @@ function validateStorageItems(items: unknown[]): AlistStorageItem[] {
     })
   }
 
-  return validItems
+  return { items: validItems, skipped }
+}
+
+/**
+ * 拒绝可能造成路径穿越或注入的 mount_path。
+ * alist 允许多层路径（如 "/media/movies"），因此只检查每一段：
+ * 不能为空、不能是 "." 或 ".."，且不含反斜杠和控制字符。
+ * （多层名称在缓存清理处会因含 "/" 被跳过，不会拼进文件系统路径。）
+ */
+function isSafeMountPath(mountPath: string): boolean {
+  const name = mountPath.replace(/^\//, '')
+  if (name.length === 0 || name.length > 255) return false
+  if (name.includes('\\') || [...name].some(ch => ch.charCodeAt(0) < 0x20)) return false
+  return name.split('/').every(seg => seg !== '' && seg !== '.' && seg !== '..')
 }
 
 /**
@@ -150,30 +180,28 @@ function extractStorageName(mountPath: string): string {
 }
 
 /**
- * 检查驱动是否受支持
+ * 获取 OpenList 支持的驱动列表。获取失败时返回 undefined（不据此拒绝导入，交给创建接口判断）
  */
-async function isDriverSupported(driver: string): Promise<boolean> {
+async function fetchSupportedDrivers(): Promise<Set<string> | undefined> {
   try {
     const response = await openlist_api_get('/api/admin/driver/names')
     if (response.data && Array.isArray(response.data)) {
-      return response.data.includes(driver)
+      return new Set(response.data.filter((d): d is string => typeof d === 'string'))
     }
-    return false
   } catch {
-    logger.warn('Failed to check driver support', 'AlistImport', { driver })
-    return false
+    logger.warn('Failed to fetch supported drivers', 'AlistImport')
   }
+  return undefined
 }
 
 /**
  * 导入单个 alist 存储到 OpenList
  */
-async function importSingleStorage(item: AlistStorageItem): Promise<boolean> {
+async function importSingleStorage(item: AlistStorageItem, supportedDrivers?: Set<string>): Promise<boolean> {
   const storageName = extractStorageName(item.mount_path)
 
-  // 检查驱动是否受支持
-  const supported = await isDriverSupported(item.driver)
-  if (!supported) {
+  // 检查驱动是否受支持（驱动列表获取失败时跳过检查）
+  if (supportedDrivers && !supportedDrivers.has(item.driver)) {
     throw new Error(t('alist_import_driver_not_supported', { driver: item.driver }))
   }
 
@@ -228,12 +256,15 @@ async function importAlistConfig(
   }
 
   // 解析配置
-  const items = parseAlistConfig(input)
-  result.total = items.length
+  const { items, skipped } = parseAlistConfigWithStats(input)
+  result.total = items.length + skipped
+  result.skipped = skipped
 
   if (items.length === 0) {
     throw new Error(t('alist_import_no_storages'))
   }
+
+  const supportedDrivers = await fetchSupportedDrivers()
 
   logger.info(`Starting alist config import: ${items.length} storages`, 'AlistImport')
 
@@ -245,7 +276,7 @@ async function importAlistConfig(
     onProgress?.(i + 1, items.length)
 
     try {
-      await importSingleStorage(item)
+      await importSingleStorage(item, supportedDrivers)
       result.success++
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error)
@@ -268,4 +299,4 @@ async function importAlistConfig(
   return result
 }
 
-export { importAlistConfig, parseAlistConfig, type AlistStorageItem, type ImportResult }
+export { importAlistConfig, parseAlistConfig, parseAlistConfigWithStats, type AlistStorageItem, type ImportResult }

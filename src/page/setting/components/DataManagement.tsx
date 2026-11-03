@@ -105,14 +105,15 @@ export function DataManagement(): JSX.Element {
               )
             }
 
-            if (result.failed > 0) {
+            // 格式不合法被跳过的条目也算作未导入成功
+            if (result.failed + result.skipped > 0) {
               const errorDetails = result.errors
                 .map(e => `${e.name}: ${e.error}`)
                 .join('\n')
               Message.warning(
                 t('alist_import_partial', {
                   success: result.success,
-                  failed: result.failed,
+                  failed: result.failed + result.skipped,
                   total: result.total,
                 })
               )

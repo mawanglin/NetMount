@@ -31,7 +31,8 @@ async function runSidecarOnce(
   return await invoke<RunSidecarOnceResult>('run_sidecar_once', {
     name: binary,
     args,
-    timeout_ms: opts?.timeoutMs,
+    // Tauri 命令参数需使用 camelCase（Rust 端的 timeout_ms），否则会被忽略
+    timeoutMs: opts?.timeoutMs,
     cwd: opts?.cwd,
   })
 }
