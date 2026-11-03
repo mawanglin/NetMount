@@ -69,9 +69,10 @@ describe('TaskScheduler', () => {
     runTaskMock.mockImplementation(
       (t: TaskListItem) => new Promise<TaskListItem>(resolve => { release = () => resolve(t) })
     )
-    const now = new Date()
+    // 固定系统时间，避免依赖真实时钟（秒数回绕会让计划时间落到过去）
+    vi.setSystemTime(new Date(2024, 0, 1, 10, 0, 0))
     const task = makeTask({
-      run: { mode: 'time', time: { intervalDays: 0, h: now.getHours(), m: now.getMinutes(), s: (now.getSeconds() + 2) % 60 } },
+      run: { mode: 'time', time: { intervalDays: 0, h: 10, m: 0, s: 2 } },
     })
     await scheduler.addTask(task)
     await vi.advanceTimersByTimeAsync(3000)
