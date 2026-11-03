@@ -41,7 +41,10 @@ export async function runStartupTasksInBackground() {
     hooks.startup.storageInitFailed = false
     hooks.upStartup()
     const refreshOk = await runStep('refresh storages and mounts', async () => {
-      await reupStorage()
+      // reupStorage 内部吞掉错误并返回 false，这里转成异常，让重试与失败提示生效
+      if (!(await reupStorage())) {
+        throw new Error('Failed to load rclone storage list')
+      }
       await addOpenlistInRclone()
       await reupMount()
     })
@@ -63,7 +66,10 @@ export async function runStartupTasksInBackground() {
   ])
 
   const refreshOk = await runStep('refresh storages and mounts', async () => {
-    await reupStorage()
+    // reupStorage 内部吞掉错误并返回 false，这里转成异常，让重试与失败提示生效
+    if (!(await reupStorage())) {
+      throw new Error('Failed to load rclone storage list')
+    }
     await addOpenlistInRclone()
     await reupMount()
   })

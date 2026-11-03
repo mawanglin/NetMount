@@ -20,9 +20,12 @@ import { cleanupStorageOnDelete } from '../../utils/tempCleanup'
 /**
  * Refresh and update storage list from both rclone and OpenList
  * Cleans up invalid internal storages automatically
+ * @returns false when the rclone storage list could not be loaded (previous entries are kept)
  */
-async function reupStorage() {
+async function reupStorage(): Promise<boolean> {
+  let rcloneOk = true
   try {
+    const previousList = rcloneInfo.storageList
     const storageListTemp: StorageList[] = []
     const storagesToDelete: string[] = []
 
@@ -74,7 +77,9 @@ async function reupStorage() {
       }
     } catch (rcloneError) {
       logger.error('Failed to fetch rclone storage list:', rcloneError as Error, 'StorageManager')
-      // rclone 失败不影响 openlist 的加载
+      // rclone 失败不影响 openlist 的加载；保留上一次的 rclone 存储，避免列表被清空
+      rcloneOk = false
+      storageListTemp.push(...previousList.filter(item => item.framework === 'rclone'))
     }
 
     // openlist
@@ -103,7 +108,8 @@ async function reupStorage() {
       }
     } catch (openlistError) {
       logger.error('Failed to fetch OpenList storage list:', openlistError as Error, 'StorageManager')
-      // openlist 失败不影响已加载的 rclone 存储
+      // openlist 失败不影响已加载的 rclone 存储；保留上一次的 openlist 存储
+      storageListTemp.push(...previousList.filter(item => item.framework === 'openlist'))
     }
 
     // 使用 ConfigService 更新 rcloneInfo，避免直接修改全局状态
@@ -111,10 +117,12 @@ async function reupStorage() {
     // Sync to store for reactive updates
     useStorageStore.getState().setStorageList(storageListTemp)
     hooks.upStorage()
+    return rcloneOk
   } catch (error) {
     logger.error('Critical error in reupStorage:', error as Error, 'StorageManager')
     // 即使出错也触发更新，避免 UI 卡住
     hooks.upStorage()
+    return false
   }
 }
 
@@ -222,7 +230,8 @@ async function delStorage(name: string) {
       })
       break
   }
-  reupStorage()
+  // 等待刷新完成，调用方随后读取存储列表时才不会拿到已删除的旧数据
+  await reupStorage()
 }
 
 /**

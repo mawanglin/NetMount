@@ -4,6 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import {
+  reupStorage,
   delStorage,
   searchStorage,
   filterHideStorage,
@@ -312,6 +313,32 @@ describe('StorageManager', () => {
       expect(openlist_api_post).toHaveBeenCalledWith('/api/admin/storage/delete', undefined, {
         id: 123,
       })
+    })
+  })
+
+  describe('reupStorage', () => {
+    it('rclone 列表获取失败时保留上一次的存储并返回 false', async () => {
+      const { rcloneInfo } = await import('../../rclone')
+      const { rclone_api_post } = await import('../../../utils/rclone/request')
+      const { openlist_api_get } = await import('../../../utils/openlist/request')
+      const { configService } = await import('../../ConfigService')
+      const { useStorageStore } = await import('../../../stores/storageStore')
+      const setStorageList = vi.fn()
+      vi.mocked(useStorageStore.getState).mockReturnValue({ setStorageList } as never)
+
+      rcloneInfo.storageList = [
+        { name: 'keep-me', framework: 'rclone', type: 's3' },
+        { name: 'old-openlist', framework: 'openlist', type: 'alist' },
+      ]
+      vi.mocked(rclone_api_post).mockRejectedValue(new Error('rclone down'))
+      vi.mocked(openlist_api_get).mockResolvedValue({ data: { content: [] } } as never)
+
+      const ok = await reupStorage()
+
+      expect(ok).toBe(false)
+      const saved = vi.mocked(configService.updateRcloneInfo).mock.calls[0]![0] as { storageList: { name: string }[] }
+      expect(saved.storageList.map(s => s.name)).toEqual(['keep-me'])
+      expect(setStorageList).toHaveBeenCalled()
     })
   })
 })
