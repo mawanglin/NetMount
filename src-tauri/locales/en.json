@@ -121,6 +121,7 @@
     "enter_startup_password": "Enter Startup Password",
     "unlock": "Unlock",
     "wrong_password": "Wrong password",
+    "too_many_attempts": "Too many attempts. Try again in {{seconds}} seconds",
     "name_cannot_empty": "Name cannot be empty",
     "task_name": "Task Name",
     "state": "State",

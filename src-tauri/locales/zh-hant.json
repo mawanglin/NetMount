@@ -805,6 +805,7 @@
     "enter_startup_password": "請輸入啟動密碼",
     "unlock": "解鎖",
     "wrong_password": "密碼錯誤",
+    "too_many_attempts": "嘗試次數過多，請 {{seconds}} 秒後再試",
 
     "import_alist_config": "導入 alist 配置",
     "import_alist_config_description": "從 alist 導出的 JSON 檔案中導入儲存配置",

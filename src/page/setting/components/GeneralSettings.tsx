@@ -28,21 +28,9 @@ import { nmConfig, roConfig, saveNmConfig, osInfo } from '../../../services/Conf
 import { formatPath } from '../../../utils'
 import { exit } from '../../../controller/main'
 import { useSettingsStore } from '../../../stores/useSettingsStore'
+import { hashPassword } from '../../../utils/passwordHash'
 
 const FormItem = Form.Item
-
-/**
- * 简单的密码哈希函数（用于本地存储，非安全场景）
- */
-function hashPassword(password: string): string {
-  let hash = 0
-  for (let i = 0; i < password.length; i++) {
-    const char = password.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
-    hash = hash & hash // 转换为32位整数
-  }
-  return hash.toString(36)
-}
 
 export function GeneralSettings(): JSX.Element {
   const { t } = useTranslation()
@@ -93,7 +81,7 @@ export function GeneralSettings(): JSX.Element {
     if (!nmConfig.settings.security) {
       nmConfig.settings.security = {}
     }
-    nmConfig.settings.security.startupPassword = hashPassword(newPassword)
+    nmConfig.settings.security.startupPassword = await hashPassword(newPassword)
     await saveNmConfig()
     Message.success(t('password_set'))
     setShowPasswordModal(false)
