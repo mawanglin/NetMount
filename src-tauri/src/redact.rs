@@ -22,6 +22,9 @@ fn mask_url_userinfo(value: &str) -> String {
 }
 
 /// 返回脱敏后的参数列表，用于写日志。
+///
+/// 识别 `--key=value`、`key=value` 与 `--key value` 三种形式；
+/// 键名含 pass / secret / token 时隐藏值，键名含 proxy 时隐藏 URL 中的凭据。
 pub fn redact_args(args: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     let mut redact_next = false;
@@ -33,25 +36,44 @@ pub fn redact_args(args: &[String]) -> Vec<String> {
             continue;
         }
 
-        if let Some(rest) = arg.strip_prefix("--") {
-            if let Some((key, value)) = rest.split_once('=') {
-                if is_secret_key(key) {
-                    out.push(format!("--{}={}", key, MASK));
-                } else if key.to_ascii_lowercase().contains("proxy") {
-                    out.push(format!("--{}={}", key, mask_url_userinfo(value)));
-                } else {
-                    out.push(arg.clone());
-                }
+        let dashes = arg.len() - arg.trim_start_matches('-').len();
+        let rest = &arg[dashes..];
+
+        if let Some((key, value)) = rest.split_once('=') {
+            let prefix = &arg[..dashes];
+            if is_secret_key(key) {
+                out.push(format!("{}{}={}", prefix, key, MASK));
                 continue;
             }
-            if is_secret_key(rest) {
-                // `--rc-pass VALUE` 形式：下一个参数是值
-                redact_next = true;
+            if key.to_ascii_lowercase().contains("proxy") {
+                out.push(format!("{}{}={}", prefix, key, mask_url_userinfo(value)));
+                continue;
             }
+        } else if dashes > 0 && is_secret_key(rest) {
+            // `--rc-pass VALUE` 形式：下一个参数是值
+            redact_next = true;
         }
-        out.push(arg.clone());
+
+        // 其余 token：URL 中的 user:pass@ 凭据同样隐藏
+        if arg.contains("://") && arg.contains('@') {
+            out.push(mask_url_userinfo(arg));
+        } else {
+            out.push(arg.clone());
+        }
     }
     out
+}
+
+/// 对多行文本（如日志）脱敏：按行、按空白切分后复用参数脱敏规则。
+/// 会把连续空白折叠为单个空格，仅用于诊断输出。
+pub fn redact_text(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let tokens: Vec<String> = line.split_whitespace().map(|t| t.to_string()).collect();
+            redact_args(&tokens).join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -80,6 +102,23 @@ mod tests {
         assert_eq!(out, v(&["--http-proxy=socks5://***@10.0.0.1:1080"]));
         let plain = redact_args(&v(&["--http-proxy=http://10.0.0.1:8080"]));
         assert_eq!(plain, v(&["--http-proxy=http://10.0.0.1:8080"]));
+    }
+
+    #[test]
+    fn masks_key_value_without_dashes_and_urls_in_plain_tokens() {
+        let out = redact_args(&v(&["password=hunter2", "url=https://u:p@host/x", "ok=1"]));
+        assert_eq!(out, v(&["password=***", "url=https://***@host/x", "ok=1"]));
+        let out = redact_args(&v(&["https://u:p@host/x"]));
+        assert_eq!(out, v(&["https://***@host/x"]));
+    }
+
+    #[test]
+    fn redacts_log_text_line_by_line() {
+        let text = "2024 INFO args: rcd --rc-user=admin --rc-pass=hunter2\nnext line --rc-pass topsecret --x";
+        let out = redact_text(text);
+        assert!(!out.contains("hunter2") && !out.contains("topsecret"));
+        assert!(out.contains("--rc-user=admin"));
+        assert_eq!(out.lines().count(), 2);
     }
 
     #[test]

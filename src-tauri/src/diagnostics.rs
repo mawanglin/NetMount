@@ -59,21 +59,12 @@ fn redact_json(value: &mut serde_json::Value) {
         Value::Object(map) => {
             for (k, v) in map.iter_mut() {
                 let key = k.to_ascii_lowercase();
-                let is_sensitive = matches!(
-                    key.as_str(),
-                    "password"
-                        | "pass"
-                        | "passwd"
-                        | "token"
-                        | "secret"
-                        | "access_key"
-                        | "accesskey"
-                        | "refresh_token"
-                        | "client_secret"
-                        | "private_key"
-                        | "apikey"
-                        | "api_key"
-                );
+                // 按子串匹配，覆盖 jwt_secret、secret_access_key、client_secret 等变体
+                let is_sensitive = [
+                    "pass", "pwd", "secret", "token", "key", "credential", "cookie", "auth",
+                ]
+                .iter()
+                .any(|needle| key.contains(needle));
                 if is_sensitive {
                     *v = Value::String("***REDACTED***".into());
                 } else {
@@ -122,7 +113,9 @@ fn maybe_add_tail_file<W: Write + Seek>(
     }
     ensure_under_app_data_dir(app, path)?;
     let data = read_file_tail(path, max_bytes)?;
-    zip_add_bytes(zip, entry_name, &data)?;
+    // 日志可能含旧版本写入的明文参数（如 --rc-pass）或带凭据的 URL，打包前先脱敏
+    let redacted = crate::redact::redact_text(&String::from_utf8_lossy(&data));
+    zip_add_bytes(zip, entry_name, redacted.as_bytes())?;
     Ok(())
 }
 
