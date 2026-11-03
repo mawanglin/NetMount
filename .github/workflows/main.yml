@@ -365,6 +365,8 @@ jobs:
       # Windows 便携式版本：将构建产物打包为 ZIP
       - name: Create Windows portable ZIP
         if: contains(matrix.platform, 'windows')
+        # 便携版是附加产物：失败只给出警告，不阻塞安装包的发布
+        continue-on-error: true
         shell: pwsh
         env:
           PACKAGE_VERSION: ${{ needs.create-release.outputs.package_version }}
@@ -375,8 +377,17 @@ jobs:
           $exeExt = ".exe"
           $exeName = "NetMount"
           
-          # 构建输出目录
-          $releaseDir = "src-tauri/target/$env:TARGET/release"
+          # 构建输出目录：传了 --target 时在 target/<triple>/release，否则在 target/release
+          # （Windows 构建矩阵未传 --target，此前硬编码前者会找不到文件）
+          $releaseDir = @("src-tauri/target/$env:TARGET/release", "src-tauri/target/release") |
+            Where-Object { Test-Path "$_/$exeName$exeExt" } |
+            Select-Object -First 1
+          if (-not $releaseDir) {
+            Write-Host "Could not find $exeName$exeExt. Contents of src-tauri/target:"
+            Get-ChildItem -Recurse -Filter "$exeName$exeExt" src-tauri/target -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+            throw "Built executable not found"
+          }
+          Write-Host "Using release dir: $releaseDir"
           
           # 创建临时打包目录
           $portableDir = "portable-pack"
