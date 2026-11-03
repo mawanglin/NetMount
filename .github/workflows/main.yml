@@ -16,6 +16,10 @@ on:
         default: false
         type: boolean
 
+# 默认只读；需要写权限的 job（创建/发布 Release、上传产物）在各自的 permissions 中单独声明
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
@@ -24,7 +28,8 @@ env:
   NODE_VERSION: '20'
   RUST_TOOLCHAIN: stable
   # 用于缓存二进制文件的 key
-  RCLONE_VERSION: "current"
+  # 与 src-tauri/build.rs 中的 RCLONE_VERSION 保持一致；变更后缓存键随之失效，会重新下载并校验
+  RCLONE_VERSION: "v1.75.2"
   OPENLIST_VERSION: "v4.1.10"
 
 jobs:

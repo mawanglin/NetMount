@@ -18,15 +18,106 @@ const DEFAULT_OPENLIST_VERSION: &str = "v4.1.10";
 // - NETMOUNT_OPENLIST_VERSION: override OpenList version tag (e.g. v4.1.10)
 // - NETMOUNT_SKIP_BIN_DOWNLOADS / NETMOUNT_SKIP_DOWNLOADS: disable downloading rclone/openlist/winfsp
 // - NETMOUNT_SKIP_WINFSP_DOWNLOAD: disable WinFsp download only
-// - NETMOUNT_GITHUB_PROXY: GitHub proxy prefix ("" or "0" to disable; default https://gh-proxy.com/)
+// - NETMOUNT_GITHUB_PROXY: optional GitHub proxy prefix (disabled by default), e.g. https://gh-proxy.com/
+// - NETMOUNT_ALLOW_UNVERIFIED: allow downloads without a pinned SHA-256 (e.g. when overriding the OpenList version)
 // - NETMOUNT_SKIP_TAURI_BUILD: skip tauri_build::try_build to avoid transient Windows file lock issues
 
 // 版本标记文件
 const OPENLIST_VERSION_FILE: &str = "binaries/openlist.version";
 
 struct ResBinUrls {
-    rclone: &'static str,
+    rclone: String,
     openlist: String,
+}
+
+// rclone 固定到具体版本（原先使用 rclone-current，会随时间漂移且无法校验）
+const RCLONE_VERSION: &str = "v1.75.2";
+
+fn rclone_url(os_arch: &str) -> String {
+    format!(
+        "https://downloads.rclone.org/{v}/rclone-{v}-{os_arch}.zip",
+        v = RCLONE_VERSION,
+        os_arch = os_arch
+    )
+}
+
+// 已知下载文件的 SHA-256。来源：
+// - rclone：https://downloads.rclone.org/v1.75.2/SHA256SUMS（官方校验文件）
+// - OpenList：GitHub 发布页为每个资源计算的 digest（v4.1.10）
+// - WinFsp：GitHub 发布页资源的 digest（v2.1）
+// 升级版本时需同步更新这些值。
+const KNOWN_SHA256: &[(&str, &str)] = &[
+    ("rclone-v1.75.2-linux-386.zip", "e7b5274ebb558b4588733bd119a992fb48d77534b4804fc9f7538c87550f3a1d"),
+    ("rclone-v1.75.2-linux-amd64.zip", "349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702"),
+    ("rclone-v1.75.2-linux-arm64.zip", "7e1e8d69654941b7b7df84ee74c5f7fb09cce7d5496947fb7bf16b55ff427d10"),
+    ("rclone-v1.75.2-linux-arm.zip", "184ca0903eede5f627ed10f5b19c5e087273493285572e289e1561db496fbc98"),
+    ("rclone-v1.75.2-osx-amd64.zip", "574e1f31cf1c464e5fb0325cb66fcbdeaf1efa1802bd9b17f13c256fd74b6561"),
+    ("rclone-v1.75.2-osx-arm64.zip", "610ab7d48615135dfc60b763858b11a426a0d3d1160c1bb76fb0ae6011b02edd"),
+    ("rclone-v1.75.2-windows-386.zip", "904876ca77f99f29400dfbb41ff99c132f64f1cdfa50fe7dc7923683b252186d"),
+    ("rclone-v1.75.2-windows-amd64.zip", "8a9db2bad1dc79a65b3348fd857069598e2aab7cf4d118b77b1df23055aff818"),
+    ("rclone-v1.75.2-windows-arm64.zip", "7eb9844c9e5b723b9ef28821891caa17f6d9d1a375c49365cbe04114cec8dcd9"),
+    ("openlist-darwin-amd64.tar.gz", "8dd42380d1d3103fc589a0b22d076e1c1d8ec6c0d233dd9b8b314a9be4d16f5b"),
+    ("openlist-darwin-arm64.tar.gz", "e6237ca1e68514b2b64967d9380114f5d02f1e7edde9297006ecf4c71080bd69"),
+    ("openlist-linux-386.tar.gz", "6b67c81c579b300f22e509d1b38278a799b4f6bfd49bc5af24a5718c6e53a5ea"),
+    ("openlist-linux-amd64.tar.gz", "a8640ab468e92853eabeaf297a3ee2c08571ebc668d5e86f8995e044b8d636e3"),
+    ("openlist-linux-arm64.tar.gz", "388a200793c59ad30f73cf38d00b09131a6772aa7fd91b82a3060f6dba666e09"),
+    ("openlist-windows-386.zip", "ea3ffd5f41c8d786907fe43ebb85dab994aa365e1ceea40adecab03b66aa8ec5"),
+    ("openlist-windows-amd64.zip", "ecfaaad3802e0d2e3eb002b7dbe5fcb2fa69b9d2a0d099b18dd38165faec2b6c"),
+    ("openlist-windows-arm64.zip", "8bd7b4bab5971fab49907444af357edde42dfd4c231a9902fedb7e3b97740009"),
+    ("winfsp-2.1.25156.msi", "073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a"),
+];
+
+/// 校验下载文件的 SHA-256。
+/// - 有已知哈希：不匹配则中止构建，并删除文件。
+/// - 无已知哈希（如通过 NETMOUNT_OPENLIST_VERSION 覆盖了版本）：默认中止；
+///   设置 NETMOUNT_ALLOW_UNVERIFIED=1 可放行并输出警告。
+fn verify_download(path: &str, file_name: &str, check_known: bool) {
+    let expected = if check_known {
+        KNOWN_SHA256
+            .iter()
+            .find(|(name, _)| *name == file_name)
+            .map(|(_, hash)| *hash)
+    } else {
+        None
+    };
+
+    let actual = sha256_file(path).unwrap_or_else(|e| panic!("Failed to hash {}: {}", path, e));
+    match expected {
+        Some(expected) if expected.eq_ignore_ascii_case(&actual) => {
+            println!("cargo:warning=SHA-256 verified: {}", file_name);
+        }
+        Some(expected) => {
+            let _ = std::fs::remove_file(path);
+            panic!(
+                "SHA-256 mismatch for {}: expected {}, got {}. The download may be corrupted or tampered with.",
+                file_name, expected, actual
+            );
+        }
+        None if env_truthy("NETMOUNT_ALLOW_UNVERIFIED") => {
+            println!(
+                "cargo:warning=No pinned SHA-256 for {} (NETMOUNT_ALLOW_UNVERIFIED=1); actual: {}",
+                file_name, actual
+            );
+        }
+        None => {
+            let _ = std::fs::remove_file(path);
+            panic!(
+                "No pinned SHA-256 for {} (actual: {}). Add it to KNOWN_SHA256, or set NETMOUNT_ALLOW_UNVERIFIED=1 to skip verification.",
+                file_name, actual
+            );
+        }
+    }
+}
+
+fn sha256_file(path: &str) -> io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    io::copy(&mut file, &mut hasher)?;
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect())
 }
 
 /// 获取 OpenList 版本
@@ -300,52 +391,52 @@ fn check_res_bin() {
     let res_bin_urls = match target_os.as_str() {
         "windows" => match arch {
             "aarch64" | "arm64" => ResBinUrls {
-                rclone: "https://downloads.rclone.org/rclone-current-windows-arm64.zip",
+                rclone: rclone_url("windows-arm64"),
                 openlist: build_openlist_url(&openlist_version, "windows", arch),
             },
             "x86" | "i686" => ResBinUrls {
-                rclone: "https://downloads.rclone.org/rclone-current-windows-386.zip",
+                rclone: rclone_url("windows-386"),
                 openlist: build_openlist_url(&openlist_version, "windows", arch),
             },
             _ => ResBinUrls {
-                rclone: "https://downloads.rclone.org/rclone-current-windows-amd64.zip",
+                rclone: rclone_url("windows-amd64"),
                 openlist: build_openlist_url(&openlist_version, "windows", arch),
             },
         },
         "linux" => match arch {
             "aarch64" | "arm64" => ResBinUrls {
-                rclone: "https://downloads.rclone.org/rclone-current-linux-arm64.zip",
+                rclone: rclone_url("linux-arm64"),
                 openlist: build_openlist_url(&openlist_version, "linux", arch),
             },
             "arm" => ResBinUrls {
-                rclone: "https://downloads.rclone.org/rclone-current-linux-arm.zip",
+                rclone: rclone_url("linux-arm"),
                 openlist: build_openlist_url(&openlist_version, "linux", arch),
             },
             "x86" | "i686" => ResBinUrls {
-                rclone: "https://downloads.rclone.org/rclone-current-linux-386.zip",
+                rclone: rclone_url("linux-386"),
                 openlist: build_openlist_url(&openlist_version, "linux", arch),
             },
             _ => ResBinUrls {
-                rclone: "https://downloads.rclone.org/rclone-current-linux-amd64.zip",
+                rclone: rclone_url("linux-amd64"),
                 openlist: build_openlist_url(&openlist_version, "linux", arch),
             },
         },
         "macos" => match arch {
             "x86_64" => ResBinUrls {
-                rclone: "https://downloads.rclone.org/rclone-current-osx-amd64.zip",
+                rclone: rclone_url("osx-amd64"),
                 openlist: build_openlist_url(&openlist_version, "macos", arch),
             },
             "arm64" | "aarch64" => ResBinUrls {
-                rclone: "https://downloads.rclone.org/rclone-current-osx-arm64.zip",
+                rclone: rclone_url("osx-arm64"),
                 openlist: build_openlist_url(&openlist_version, "macos", arch),
             },
             _ => ResBinUrls {
-                rclone: "",
+                rclone: String::new(),
                 openlist: build_openlist_url(&openlist_version, "macos", arch),
             },
         },
         _ => ResBinUrls {
-            rclone: "",
+            rclone: String::new(),
             openlist: build_openlist_url(&openlist_version, &target_os, arch),
         },
     };
@@ -378,6 +469,7 @@ fn check_res_bin() {
                 );
             })
             .unwrap_or_else(|e| panic!("Failed to download WinFsp: {}", e));
+            verify_download(winfsp_path, "winfsp-2.1.25156.msi", true);
         };
     }
 
@@ -403,10 +495,10 @@ Expected {} or renamed sidecar (rclone-{}).",
         clean_dir(&temp_dir).expect("Failed to prepare temp directory");
 
         // 下载 rclone
-        let zip_name: &str = &extract_filename_from_url(res_bin_urls.rclone).unwrap();
+        let zip_name: &str = &extract_filename_from_url(&res_bin_urls.rclone).unwrap();
 
         download_with_progress(
-            res_bin_urls.rclone,
+            &res_bin_urls.rclone,
             temp_dir.join(zip_name).to_str().unwrap(),
             |total_size, downloaded| {
                 println!(
@@ -418,6 +510,7 @@ Expected {} or renamed sidecar (rclone-{}).",
             },
         )
         .unwrap_or_else(|e| panic!("Failed to download rclone: {}", e));
+        verify_download(temp_dir.join(zip_name).to_str().unwrap(), zip_name, true);
 
         // 解压 rclone
         decompress_file(
@@ -504,6 +597,12 @@ Expected {} or renamed sidecar (openlist-{}).",
             },
         )
         .unwrap_or_else(|e| panic!("Failed to download OpenList: {}", e));
+        // 已知哈希仅对默认版本有效；覆盖版本时没有可比对的值
+        verify_download(
+            temp_dir.join(zip_name).to_str().unwrap(),
+            zip_name,
+            openlist_version == DEFAULT_OPENLIST_VERSION,
+        );
 
         // 解压 openlist 到临时目录
         decompress_file(temp_dir.join(zip_name).to_str().unwrap(), temp_dir.to_str().unwrap())
@@ -706,6 +805,7 @@ use futures_util::stream::StreamExt;
 use itertools::Itertools as _;
 use reqwest::Client;
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{self, Write};
 use tauri_build::Attributes;
@@ -725,7 +825,9 @@ where
     // - set NETMOUNT_GITHUB_PROXY="" or "0" to disable proxying
     // - set NETMOUNT_GITHUB_PROXY="https://your-proxy/" to customize
     if url.contains("//github.com") {
-        let proxy = env::var("NETMOUNT_GITHUB_PROXY").unwrap_or_else(|_| "https://gh-proxy.com/".to_string());
+        // 默认不经过第三方代理：下载的是会随安装包分发、甚至被 msiexec 执行的二进制，
+        // 不应让第三方站点处于下载链路上。国内网络需要时再显式设置该环境变量。
+        let proxy = env::var("NETMOUNT_GITHUB_PROXY").unwrap_or_default();
         let proxy = proxy.trim().to_string();
         if !proxy.is_empty() && proxy != "0" {
             let proxy = if proxy.ends_with('/') { proxy } else { format!("{}/", proxy) };
@@ -777,7 +879,11 @@ fn unzip_file(zip_path: &str, dest_dir: &str) -> Result<(), Box<dyn std::error::
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let outpath = Path::new(dest_dir).join(file.name());
+        // enclosed_name 会拒绝绝对路径和包含 `..` 的条目（Zip Slip）
+        let Some(relative) = file.enclosed_name() else {
+            return Err(format!("unsafe path in archive: {}", file.name()).into());
+        };
+        let outpath = Path::new(dest_dir).join(relative);
 
         if (&*file.name()).ends_with('/') {
             std::fs::create_dir_all(&outpath)?;
@@ -826,7 +932,14 @@ fn decompress_tar_gz(
         let mut entry = entry?;
 
         // 获取条目的路径
-        let entry_path = entry.path().unwrap();
+        let entry_path = entry.path()?.into_owned();
+        // 拒绝绝对路径和 `..`，防止解压到目标目录之外
+        if entry_path
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_) | std::path::Component::CurDir))
+        {
+            return Err(format!("unsafe path in archive: {}", entry_path.display()).into());
+        }
         let outpath = Path::new(destination_dir).join(entry_path);
 
         // 创建目录或文件
