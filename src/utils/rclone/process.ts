@@ -10,7 +10,7 @@ import { logger } from '../../services/LoggerService'
 import { LOCALHOST_URLS } from '../../constants'
 import { netmountLogDir, rcloneConfigFile, rcloneLogFile } from '../netmountPaths'
 import { restartSidecar, startSidecarAndWait, stopSidecarGracefully } from '../sidecarService'
-import { parseExtraCliArgs } from '../cliArgs'
+import { filterBlockedArgs, parseExtraCliArgs, RCLONE_BLOCKED_FLAGS } from '../cliArgs'
 import type { NMConfig } from '../../type/config'
 
 /**
@@ -77,7 +77,8 @@ async function startRclone() {
 
   const args: string[] = [
     'rcd',
-    `--rc-addr=:${rcloneInfo.endpoint.localhost.port.toString()}`,
+    // 只监听本机回环地址：应用仅通过 127.0.0.1 访问 RC，不应把带密码的管理接口暴露给局域网
+    `--rc-addr=127.0.0.1:${rcloneInfo.endpoint.localhost.port.toString()}`,
     `--rc-user=${nmConfig.framework.rclone.user}`,
     `--rc-pass=${nmConfig.framework.rclone.password}`,
     '--rc-allow-origin=' + window.location.origin || '*',
@@ -102,7 +103,11 @@ async function startRclone() {
     }
   }
 
-  args.push(...parseExtraCliArgs(nmConfig.framework.rclone.extraArgs))
+  const extra = filterBlockedArgs(parseExtraCliArgs(nmConfig.framework.rclone.extraArgs), RCLONE_BLOCKED_FLAGS)
+  if (extra.blocked.length > 0) {
+    logger.warn('Ignored rclone extra args that override protected flags', 'Rclone', { blocked: extra.blocked })
+  }
+  args.push(...extra.allowed)
 
   // 使用 Rust 端启动 sidecar，确保由主进程创建
   const pid = await startSidecarAndWait({

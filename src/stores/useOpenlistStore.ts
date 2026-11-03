@@ -36,6 +36,8 @@ const createDefaultState = (): OpenlistState => ({
   openlistConfig: {
     force: true,
     scheme: {
+      // 只监听本机：应用仅通过回环地址访问，避免把管理界面和 WebDAV 暴露给局域网
+      address: '127.0.0.1',
       http_port: 9751,
     },
     temp_dir: 'data\\temp',

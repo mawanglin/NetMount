@@ -14,7 +14,7 @@ import { openlist_api_ping } from './request'
 import { addParams, openlistDataDir } from './paths'
 import { openlistLogFile } from '../netmountPaths'
 import { restartSidecar, startSidecarAndWait, stopSidecarGracefully } from '../sidecarService'
-import { parseExtraCliArgs } from '../cliArgs'
+import { filterBlockedArgs, OPENLIST_BLOCKED_FLAGS, parseExtraCliArgs } from '../cliArgs'
 
 async function startOpenlist() {
   //设置默认临时(缓存)目录
@@ -42,11 +42,14 @@ async function startOpenlist() {
     logger.warn('OpenList pre-start password reset failed, will retry after server starts', 'OpenList', { error: e })
   }
 
-  const args: string[] = [
-    'server',
-    ...addParams(),
-    ...parseExtraCliArgs(nmConfig.framework.openlist.extraArgs),
-  ]
+  const extra = filterBlockedArgs(
+    parseExtraCliArgs(nmConfig.framework.openlist.extraArgs),
+    OPENLIST_BLOCKED_FLAGS
+  )
+  if (extra.blocked.length > 0) {
+    logger.warn('Ignored OpenList extra args that override protected flags', 'OpenList', { blocked: extra.blocked })
+  }
+  const args: string[] = ['server', ...addParams(), ...extra.allowed]
   logger.info('OpenList start args', 'OpenList', { args })
 
   // 使用 Rust 端启动 sidecar，确保由主进程创建

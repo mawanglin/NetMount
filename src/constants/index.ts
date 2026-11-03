@@ -65,5 +65,6 @@ export const HTTP_HEADERS = {
 
 export const LOCALHOST_URLS = {
   RCLONE: 'http://127.0.0.1',
-  OPENLIST: 'http://localhost',
+  // 使用回环 IP 而非 localhost，避免解析到仅监听 IPv4 的服务不监听的 ::1
+  OPENLIST: 'http://127.0.0.1',
 } as const

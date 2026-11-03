@@ -30,6 +30,7 @@ interface OpenlistInfo {
       ssl_mode?: string
     }
     scheme?: {
+      address?: string
       http_port?: number
       https_port?: number
       cert_file?: string
