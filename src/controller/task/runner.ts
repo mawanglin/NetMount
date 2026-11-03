@@ -2,8 +2,19 @@ import type { TaskListItem } from '../../type/config'
 import { copyDir, copyFile, delDir, delFile, moveDir, moveFile, sync } from '../../services/storage'
 import { logger } from '../../services/LoggerService'
 
+/** 路径是否指向存储根目录（空串、"/"、"\\"，或只由分隔符组成） */
+function isRootPath(path: string): boolean {
+  return path.replace(/[\\/]+/g, '') === ''
+}
+
 async function runTask(task: TaskListItem): Promise<TaskListItem> {
   const executeTask = async (t: TaskListItem) => {
+    // 删除类任务无人值守地定时执行，源为存储根目录会清空整个存储（purge），一律拒绝
+    // （配置可经导入带入，因此执行时也要检查，不能只依赖添加页的校验）
+    if (t.taskType === 'delete' && isRootPath(t.source.path)) {
+      throw new Error('Refusing to run a delete task on the storage root')
+    }
+
     const srcIsDir = t.source.path.endsWith('/')
     const targetIsDir = t.target.path.endsWith('/')
 
@@ -81,4 +92,4 @@ async function runTask(task: TaskListItem): Promise<TaskListItem> {
   return task
 }
 
-export { runTask }
+export { runTask, isRootPath }

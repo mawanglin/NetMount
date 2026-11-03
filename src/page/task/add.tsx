@@ -19,6 +19,7 @@ import { IconQuestionCircle } from '@arco-design/web-react/icon'
 import { filterHideStorage } from '../../services/storage/StorageManager'
 import { useNavigate } from 'react-router-dom'
 import { saveTask } from '../../controller/task/task'
+import { isRootPath } from '../../controller/task/runner'
 import { formatPath, getURLSearchParam } from '../../utils'
 const Row = Grid.Row
 const Col = Grid.Col
@@ -426,6 +427,15 @@ function AddTask_page() {
                 !taskInfo.source.path ||
                 (taskInfo.taskType !== 'delete' &&
                   (!taskInfo.target.storageName || !taskInfo.target.path))
+              ) {
+                Notification.error({
+                  title: t('error'),
+                  content: t('the_path_is_illegal'),
+                })
+              } else if (
+                // 删除类任务不允许以存储根目录为源（会清空整个存储）
+                taskInfo.taskType === 'delete' &&
+                isRootPath(taskInfo.source.path)
               ) {
                 Notification.error({
                   title: t('error'),
