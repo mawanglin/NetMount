@@ -15,28 +15,24 @@ import { logger } from '../../services/LoggerService'
  */
 async function refreshVfsCache(storageName: string, path: string): Promise<void> {
   try {
-    // 获取存储对应的挂载点
-    const mountList = rcloneInfo.mountList
-    const mountItem = mountList.find(m => m.storageName === storageName)
-    
-    if (mountItem) {
-      // 构建 VFS 刷新路径：使用空字符串刷新根目录，或使用相对路径
-      // rclone /vfs/refresh 的 dir 参数是相对于挂载点的路径
-      const refreshPath = path === '/' ? '' : path
-      await rclone_api_post('/vfs/refresh', {
-        dir: refreshPath,
-        recursive: false,
-      }, true) // ignoreError = true, 刷新失败不影响列表加载
-      logger.debug('VFS cache refreshed', 'FileManager', { storageName, path, refreshPath })
-    } else {
-      // 如果没有找到挂载点，尝试使用存储名作为 fs 参数刷新
-      // 这种情况适用于通过 rclone rc 直接管理的存储
-      logger.debug('No mount point found, trying direct VFS refresh', 'FileManager', { storageName, path })
-      await rclone_api_post('/vfs/refresh', {
-        dir: path === '/' ? '' : path,
-        recursive: false,
-      }, true)
+    // rclone 返回的挂载列表里 storageName 是 fs 字符串（如 "name:"），需用同样的格式比较
+    const fs = convertStoragePath(storageName, undefined, undefined, undefined, true)
+    const mountItem = rcloneInfo.mountList.find(m => m.storageName === fs)
+
+    if (!mountItem) {
+      // 没有挂载就没有 VFS 缓存可刷新
+      logger.debug('Storage is not mounted, skip VFS refresh', 'FileManager', { storageName, path })
+      return
     }
+
+    // 必须指定 fs：存在多个 VFS（多个挂载）时，rclone 不带 fs 的 /vfs/refresh 会报错
+    // dir 是相对于该 fs 根目录的路径，空字符串表示根目录
+    await rclone_api_post('/vfs/refresh', {
+      fs,
+      dir: path === '/' ? '' : path,
+      recursive: false,
+    }, true) // ignoreError = true, 刷新失败不影响列表加载
+    logger.debug('VFS cache refreshed', 'FileManager', { storageName, path })
   } catch {
     // 忽略错误，VFS 刷新失败不影响主流程
   }
@@ -239,9 +235,12 @@ const uploadFileRequest = (option: RequestOptions, storageName: string, path: st
 
   xhr.onerror = () => onError(xhr)
 
+  // 查询参数必须编码：文件名中的 & # % + 等字符否则会截断或篡改 remote
+  const fsParam = encodeURIComponent(convertStoragePath(storageName, undefined, undefined, undefined, true))
+  const remoteParam = encodeURIComponent(convertStoragePath(storageName, path, true, true, undefined))
   xhr.open(
     'POST',
-    `${rcloneInfo.endpoint.url}/operations/uploadfile?fs=${convertStoragePath(storageName, undefined, undefined, undefined, true)}&remote=${convertStoragePath(storageName, path, true, true, undefined)}`,
+    `${rcloneInfo.endpoint.url}/operations/uploadfile?fs=${fsParam}&remote=${remoteParam}`,
     true
   )
   xhr.setRequestHeader('Authorization', getRcloneApiHeaders().Authorization)
