@@ -222,11 +222,9 @@ export class TaskRepository extends BaseRepository<TaskEntity> {
     const existingIndex = nmConfig.task.findIndex(task => task.name === taskInfo.name)
 
     if (existingIndex !== -1) {
-      // 存在同名任务，更新
-      if (taskInfo.run.runId) {
-        const scheduler = await getTaskScheduler()
-        scheduler.cancelTask(taskInfo.name)
-      }
+      // 存在同名任务，更新：无论新对象是否带 runId，都要取消旧任务的排期
+      const scheduler = await getTaskScheduler()
+      scheduler.cancelTask(taskInfo.name)
       nmConfig.task[existingIndex] = taskInfo
     } else {
       // 新任务，添加

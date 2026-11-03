@@ -156,6 +156,10 @@ class ConfigService {
     try {
       const configData = await invoke<Partial<NMConfig>>('get_config')
       this.config = mergeObjects(this.config, configData)
+      // 清理旧版本遗留的、已失效的任务句柄
+      this.config.task?.forEach(task => {
+        if (task.run) delete task.run.runId
+      })
       
       // 解码框架密码（向后兼容明文密码）
       if (this.config.framework?.rclone?.password) {
@@ -183,6 +187,10 @@ class ConfigService {
     try {
       // 创建配置副本，编码框架密码后再保存
       const configToSave = JSON.parse(JSON.stringify(this.config)) as NMConfig
+      // runId 是运行期的 setTimeout/setInterval 句柄，不能持久化，否则重启后任务会被误判为"运行中"
+      configToSave.task?.forEach(task => {
+        if (task.run) delete task.run.runId
+      })
       if (configToSave.framework?.rclone?.password) {
         configToSave.framework.rclone.password = encodePassword(configToSave.framework.rclone.password)
       }
