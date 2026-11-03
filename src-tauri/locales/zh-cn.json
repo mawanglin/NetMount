@@ -303,6 +303,7 @@
     "password2": "加盐",
     "key": "秘钥",
     "storage_name_already_exists": "存储名称已存在",
+    "storage_name_invalid": "存储名称不合法：不能包含 / \\ : 或控制字符，不能以 - 开头，首尾不能有空格",
     "get_notice": "获取通知",
     "startup_task_failed": "启动失败：{{step}}",
     "startup_storage_mount_syncing": "加载和挂载存储中",

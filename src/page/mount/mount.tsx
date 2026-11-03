@@ -222,7 +222,7 @@ function Mount_page() {
                       </Button>
                       <Button
                         onClick={() => {
-                          navigate('./add?edit=true&mountPath=' + item.mountPath)
+                          navigate('./add?edit=true&mountPath=' + encodeURIComponent(item.mountPath))
                         }}
                       >
                         {t('edit')}

@@ -37,3 +37,14 @@ describe('isHttpUrl', () => {
     expect(isHttpUrl(v)).toBe(false)
   })
 })
+
+import { isValidStorageName } from '../general'
+
+describe('isValidStorageName', () => {
+  it.each(['mys3', '115 Cloud', '网盘', 'a.b', 'name_1', 'a@b+c'])('接受 %s', v => {
+    expect(isValidStorageName(v)).toBe(true)
+  })
+  it.each(['', ' a', 'a ', '.', '..', '-x', 'a/b', 'a\\b', 'a:b', 'a\u0000b', 'x'.repeat(256)])('拒绝 %j', v => {
+    expect(isValidStorageName(v)).toBe(false)
+  })
+})

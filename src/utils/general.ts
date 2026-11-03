@@ -69,3 +69,15 @@ export function mergeObjects<T>(target: T, source: Partial<T>): T {
   }
   return target
 }
+
+/**
+ * 存储名称是否合法。
+ * 名称会用作 rclone 的 remote 名（"name:"）、OpenList 挂载路径与缓存目录名，
+ * 因此不能含路径分隔符、冒号、控制字符，不能以 "-" 开头，首尾不能有空格，也不能是 "." / ".."。
+ */
+export function isValidStorageName(name: string): boolean {
+  if (!name || name.length > 255) return false
+  if (name !== name.trim() || name === '.' || name === '..' || name.startsWith('-')) return false
+  if (/[/\\:]/.test(name)) return false
+  return ![...name].some(ch => ch.charCodeAt(0) < 0x20)
+}

@@ -16,7 +16,7 @@ import { useTranslation } from 'react-i18next'
 import { useEffect, useState } from 'react'
 import { createStorage } from '../../controller/storage/create'
 import { useNavigate } from 'react-router-dom'
-import { getProperties, getURLSearchParam, openUrlInBrowser } from '../../utils'
+import { getProperties, getURLSearchParam, isValidStorageName, openUrlInBrowser } from '../../utils'
 import { getStorageParams, searchStorage } from '../../services/storage/StorageManager'
 // import { rcloneInfo } from "../../services/rclone";
 import { IconQuestionCircle } from '@arco-design/web-react/icon'
@@ -359,6 +359,12 @@ function AddStorage_page() {
                       return
                     }
 
+                    if (!isEditMode && !isValidStorageName(storageName)) {
+                      Message.error(t('storage_name_invalid'))
+                      setSubmitting(false)
+                      return
+                    }
+
                     const parameters: ParametersType =
                       storageInfo.framework === 'rclone'
                         ? formHook.getFieldsValue(formHook.getTouchedFields())
@@ -374,7 +380,8 @@ function AddStorage_page() {
                       }
                     }
                     
-                    logger.debug('Storage parameters', 'Storage', { parameters })
+                    // 只记录参数名：值里可能包含密码、令牌等凭据
+                    logger.debug('Storage parameters', 'Storage', { keys: Object.keys(parameters) })
 
                     //return
 

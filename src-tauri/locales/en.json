@@ -303,6 +303,7 @@
     "password2": "Salt",
     "key": "Key",
     "storage_name_already_exists": "Storage name already exists",
+    "storage_name_invalid": "Invalid storage name: must not contain / \\ : or control characters, start with -, or have leading/trailing spaces",
     "get_notice": "Get Notice",
     "startup_task_failed": "Startup failed: {{step}}",
     "startup_storage_mount_syncing": "Loading storage and mounts...",

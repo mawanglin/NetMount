@@ -568,6 +568,18 @@ export default function AddMount_page() {
 
               mountPathTemp = formatPath(mountPathTemp, isWindows)
 
+              // 编辑时不能把路径改成另一条已有配置的路径（否则会出现两条相同路径的配置）
+              if (isEditMode) {
+                const conflict = getMountStorage(mountPathTemp)
+                if (conflict && conflict !== getMountStorage(originalMountPath)) {
+                  Notification.error({
+                    title: t('error'),
+                    content: t('mount_path_already_exists'),
+                  })
+                  return
+                }
+              }
+
               if (isEditMode) {
                 await editMountStorage(
                   {

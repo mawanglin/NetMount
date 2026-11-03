@@ -19,4 +19,4 @@ export {
 export { set_devtools_state, sleep, getAvailablePorts } from './system/index'
 
 // General utilities
-export { isEmptyObject, getURLSearchParam, getProperties, mergeObjects } from './general'
+export { isEmptyObject, getURLSearchParam, getProperties, mergeObjects, isValidStorageName } from './general'

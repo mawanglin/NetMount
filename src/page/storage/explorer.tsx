@@ -1,4 +1,4 @@
-import { CSSProperties, useEffect, useState } from 'react'
+import { CSSProperties, useEffect, useRef, useState } from 'react'
 import {
   Badge,
   Button,
@@ -65,6 +65,7 @@ function ExplorerItem() {
   const [loading, setLoading] = useState<boolean>()
 
   const [clipList, setClipList] = useState<Array<clipListItem>>([])
+  const listRequestId = useRef(0)
 
   const columns: TableColumnProps[] = [
     {
@@ -94,12 +95,18 @@ function ExplorerItem() {
 
   //刷新文件列表
   async function fileInfo(forceRefresh?: boolean) {
+    // 快速切换目录/存储时，较早发出的请求可能后返回，只采用最新一次请求的结果
+    const requestId = ++listRequestId.current
     setLoading(true)
     try {
       const l = await getFileList(storageName!, path!, forceRefresh)
-      setFileInfo(l)
+      if (requestId === listRequestId.current) {
+        setFileInfo(l)
+      }
     } finally {
-      setLoading(false)
+      if (requestId === listRequestId.current) {
+        setLoading(false)
+      }
     }
   }
 
@@ -169,6 +176,13 @@ function ExplorerItem() {
 
   useEffect(() => {}, [clipList])
 
+  // 新建/重命名时的名称校验：不允许空、"."、".." 段，避免通过名称跳出当前目录
+  const hasUnsafeSegment = (name: string): boolean =>
+    name
+      .replace(/\\/g, '/')
+      .split('/')
+      .some(seg => seg === '.' || seg === '..')
+
   function MakeDir() {
     let dirNameTemp = ''
     if (storageName && path) {
@@ -183,9 +197,13 @@ function ExplorerItem() {
           />
         ),
         onOk: async () => {
-          dirNameTemp
-            ? await mkDir(storageName, path + '/' + dirNameTemp, fileInfo)
-            : Message.error(t('dir_name_cannot_empty'))
+          if (!dirNameTemp) {
+            Message.error(t('dir_name_cannot_empty'))
+          } else if (hasUnsafeSegment(dirNameTemp)) {
+            Message.error(`${t('error')}: ${dirNameTemp}`)
+          } else {
+            await mkDir(storageName, path + '/' + dirNameTemp, fileInfo)
+          }
         },
       })
     }
@@ -228,7 +246,10 @@ function ExplorerItem() {
         />
       ),
       onOk: async () => {
-        if (nameTemp) {
+        if (nameTemp && (nameTemp.includes('/') || nameTemp.includes('\\') || hasUnsafeSegment(nameTemp))) {
+          // 重命名只能改名称，不能借此移动到其他目录
+          Message.error(`${t('rename_failed')}: ${nameTemp}`)
+        } else if (nameTemp) {
           try {
             isDir
               ? await moveDir(storageName!, filePath, storageName!, getParentPath(filePath), nameTemp)
