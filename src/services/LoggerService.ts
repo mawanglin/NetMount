@@ -50,6 +50,36 @@ const DEFAULT_CONFIG: LoggerConfig = {
 }
 
 // ============================================
+// 敏感数据脱敏
+// ============================================
+const SENSITIVE_KEY_RE =
+  /(pass(word|wd)?|pwd|secret|token|credential|cookie|authorization|api[_-]?key|access[_-]?key|private[_-]?key)/i
+const REDACTED = '***REDACTED***'
+const MAX_REDACT_DEPTH = 6
+
+/** 隐藏字符串里 URL 的 user:pass@ 凭据 */
+function maskUrlCredentials(value: string): string {
+  return value.replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, '$1***@')
+}
+
+/**
+ * 对日志附带的结构化数据脱敏：键名含 password/secret/token 等的值整体隐藏，
+ * 字符串中 URL 里的凭据被遮蔽。返回新对象，不修改入参。
+ */
+export function redactLogData(value: unknown, depth: number = 0): unknown {
+  if (typeof value === 'string') return maskUrlCredentials(value)
+  if (value === null || typeof value !== 'object' || value instanceof Error) return value
+  if (depth >= MAX_REDACT_DEPTH) return '[truncated]'
+  if (Array.isArray(value)) return value.map(item => redactLogData(item, depth + 1))
+
+  const out: Record<string, unknown> = {}
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    out[key] = SENSITIVE_KEY_RE.test(key) ? REDACTED : redactLogData(val, depth + 1)
+  }
+  return out
+}
+
+// ============================================
 // 日志条目类型
 // ============================================
 interface LogEntry {
@@ -171,9 +201,9 @@ export class Logger {
     const entry: LogEntry = {
       timestamp: new Date(),
       level,
-      message,
+      message: maskUrlCredentials(message),
       context,
-      data,
+      data: data ? (redactLogData(data) as Record<string, unknown>) : undefined,
       error,
     }
 
